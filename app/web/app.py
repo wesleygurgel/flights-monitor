@@ -187,6 +187,117 @@ def search_status(request: Request, route_id: str):
     return resp
 
 
+# ---------- bônus azul ----------
+
+def _bonus_reading() -> bool:
+    return "bonus" in _manual
+
+
+def _bonus_read() -> None:
+    from ..bonus.service import run_bonus
+    try:
+        run_bonus(active_notifiers(False), trigger="manual")
+    except Exception:
+        log.exception("leitura manual dos blogs falhou")
+    finally:
+        with _manual_lock:
+            _manual.discard("bonus")
+
+
+@app.get("/bonus", response_class=HTMLResponse)
+def bonus_page(request: Request, salvo: int = 0):
+    from ..bonus import service
+    from ..bonus.parser import ALL_PROGRAMS
+
+    with SessionLocal() as s:
+        d = service.campaigns_for_panel(s)
+        feeds = []
+        for name, key in service.feed_keys():
+            runs = queries.runs_for(s, key, 1)
+            feeds.append({"name": name, "run": runs[0] if runs else None})
+    cfg = d["cfg"]
+    top = next((c for c in d["active"] if not c.transferred and cfg.wants(c.program)
+                and (c.bonus_pct or 0) >= cfg.min_pct), None)
+    chans = [n for n, on in (("e-mail", cfg.notify_email), ("WhatsApp", cfg.notify_whatsapp)) if on]
+    nxt = queries.next_run(settings.bonus_cron, fmt.TZ)
+
+    def left_text(c) -> str:
+        n = service.days_left(c)
+        if n is None:
+            return "Prazo não informado nos posts"
+        if n <= 0:
+            return "Termina hoje"
+        return "Termina amanhã" if n == 1 else f"Até {fmt.d_short(c.ends_on)}, faltam {n} dias"
+
+    def left_short(c) -> str:
+        n = service.days_left(c)
+        if n is None:
+            return "Prazo não informado nos posts"
+        return "Termina hoje" if n <= 0 else ("Termina amanhã" if n == 1 else f"Faltam {n} dias")
+
+    return render(request, "bonus.html", nav="bonus", top=top, left_text=left_text, left_short=left_short,
+                  channels_text=" e ".join(chans), next_bonus=f"{nxt.hour}:{nxt.minute:02d}" if nxt else None,
+                  feeds=feeds, failing_feeds=[f for f in feeds if f["run"] and f["run"].is_bad],
+                  all_programs=ALL_PROGRAMS, saved=bool(salvo), reading=_bonus_reading(), **d)
+
+
+@app.post("/bonus/config")
+async def bonus_config(request: Request):
+    from ..bonus import service
+    from ..bonus.parser import ALL_PROGRAMS
+
+    form = await request.form()
+    chosen = [p for p in form.getlist("programs") if p in ALL_PROGRAMS]
+    with SessionLocal() as s:
+        cfg = service.get_settings(s)
+        cfg.programs = "" if len(chosen) == len(ALL_PROGRAMS) else ",".join(chosen)
+        try:
+            cfg.min_pct = max(1, min(400, int(str(form.get("min_pct", "80")).strip() or 80)))
+        except ValueError:
+            pass
+        cfg.notify_email = form.get("notify_email") == "on"
+        cfg.notify_whatsapp = form.get("notify_whatsapp") == "on"
+        cfg.active = form.get("active") == "on"
+        s.commit()
+    return RedirectResponse("/bonus?salvo=1", status_code=303)
+
+
+@app.post("/bonus/{campaign_id}/transferi")
+def bonus_transferred(request: Request, campaign_id: int):
+    from ..db import BonusCampaign
+    with SessionLocal() as s:
+        c = s.get(BonusCampaign, campaign_id)
+        if c:
+            c.transferred = not c.transferred
+            s.commit()
+            s.refresh(c)
+        if request.headers.get("HX-Request") and c:
+            resp = render(request, "_transfer_button.html", c=c)
+            resp.headers["HX-Refresh"] = "true"  # a fita muda de cor; recarrega para refletir
+            return resp
+    return RedirectResponse("/bonus", status_code=303)
+
+
+@app.post("/bonus/buscar")
+def bonus_read_now(request: Request):
+    with _manual_lock:
+        if not _bonus_reading():
+            _manual.add("bonus")
+            threading.Thread(target=_bonus_read, daemon=True).start()
+    if request.headers.get("HX-Request"):
+        return render(request, "_bonus_read_button.html", reading=True)
+    return RedirectResponse("/bonus", status_code=303)
+
+
+@app.get("/bonus/leitura")
+def bonus_read_status(request: Request):
+    if _bonus_reading():
+        return render(request, "_bonus_read_button.html", reading=True)
+    resp = render(request, "_bonus_read_button.html", reading=False)
+    resp.headers["HX-Refresh"] = "true"
+    return resp
+
+
 @app.post("/rotas/{route_id}/excluir")
 def delete_route(route_id: str):
     with SessionLocal() as s:

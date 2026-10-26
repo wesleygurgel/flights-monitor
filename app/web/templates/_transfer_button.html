@@ -1,0 +1,3 @@
+<form method="post" action="/bonus/{{ c.id }}/transferi" hx-post="/bonus/{{ c.id }}/transferi" hx-swap="outerHTML" style="display:contents">
+  <button type="submit" class="btn btn-line btn-sm" aria-pressed="{{ 'true' if c.transferred else 'false' }}">{% if c.transferred %}Desfazer "já transferi"{% else %}Já transferi{% endif %}</button>
+</form>

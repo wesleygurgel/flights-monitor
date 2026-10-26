@@ -168,28 +168,36 @@ def last_candidates(watch: Watch, limit: int) -> list[tuple[str, CoarsePrice]]:
     return [(r.destination, CoarsePrice(r.outbound_date, r.return_date, r.price)) for r in rows]
 
 
-def check_health(watch: Watch, notifiers: list) -> str | None:
-    """Avisa quando a coleta da rota quebra (N rodadas seguidas sem resultado) e quando volta.
+ROUTE_HINT = ("Enquanto isso, nenhum alerta de preço sai para essa rota. Se o motivo for HTTP 429, o Google "
+              "bloqueou o IP temporariamente: aumente REQUEST_DELAY ou reduza as datas checadas.")
 
-    Só manda no momento da virada, para não repetir o aviso a cada rodada.
-    Retorna "down", "up" ou None (para testes e log).
-    """
+
+def health_event(key: str) -> tuple[str | None, SearchRun | None]:
+    """Detecta a virada: N rodadas seguidas ruins ("down") ou a primeira boa depois delas ("up")."""
     with SessionLocal() as s:
         runs = s.execute(
-            select(SearchRun).where(SearchRun.watch_id == watch.id, SearchRun.status != "running")
+            select(SearchRun).where(SearchRun.watch_id == key, SearchRun.status != "running")
             .order_by(SearchRun.started_at.desc(), SearchRun.id.desc()).limit(FAIL_STREAK_ALERT + 1)
         ).scalars().all()
     if len(runs) < FAIL_STREAK_ALERT:
-        return None
+        return None, None
     streak = runs[:FAIL_STREAK_ALERT]
     before = runs[FAIL_STREAK_ALERT] if len(runs) > FAIL_STREAK_ALERT else None
-    event = None
     if all(r.is_bad for r in streak) and (before is None or not before.is_bad):
-        event = "down"
-    elif not runs[0].is_bad and len(runs) > FAIL_STREAK_ALERT and all(r.is_bad for r in runs[1:]):
-        event = "up"
+        return "down", runs[0]
+    if not runs[0].is_bad and len(runs) > FAIL_STREAK_ALERT and all(r.is_bad for r in runs[1:]):
+        return "up", runs[0]
+    return None, None
+
+
+def check_health(watch: Watch, notifiers: list) -> str | None:
+    """Avisa quando a coleta da rota quebra e quando volta. Só na virada, para não repetir."""
+    from .web.fmt import route_code
+
+    event, run = health_event(watch.id)
     if event:
-        subject, body = format_health_message(watch, event, runs[0])
+        subject, body = format_health_message(route_code(watch.origin, watch.destinations), event, run,
+                                              ROUTE_HINT if event == "down" else "")
         notify_all(channels_for(watch, notifiers), subject, body)
     return event
 

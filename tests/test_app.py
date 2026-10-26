@@ -1,22 +1,12 @@
-import os
-import tempfile
+import pytest
+from fastapi.testclient import TestClient
 
-_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-os.environ["DATABASE_URL"] = f"sqlite:///{_db.name}"
-os.environ["APP_PASSWORD"] = "segredo"
-os.environ["SECRET_KEY"] = "chave-de-teste-com-mais-de-32-caracteres"
-os.environ["COLLECTOR"] = "mock"
-os.environ["WATCHLIST"] = "/nao/existe.yaml"
-
-import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-
-from app import demo  # noqa: E402
-from app.collectors import Offer  # noqa: E402
-from app.config import Watch  # noqa: E402
-from app.db import Route, SessionLocal, init_db  # noqa: E402
-from app.rules import evaluate  # noqa: E402
-from app.web.app import app  # noqa: E402
+from app import demo
+from app.collectors import Offer
+from app.config import Watch
+from app.db import Route, SessionLocal, init_db
+from app.rules import evaluate
+from app.web.app import app
 
 SAO = "nat-sao-mar-abr-2027"
 
@@ -186,3 +176,28 @@ def test_recusa_secret_key_fraca():
     assert secret_problem("senha", "curta")
     assert secret_problem("senha", "a" * 64) is None
     assert secret_problem(None, "troque-esta-chave") is None  # sem senha, sem cookie a proteger
+
+
+def test_tela_bonus(logged):
+    from sqlalchemy import select
+    from app.db import BonusCampaign
+    r = logged.get("/bonus")
+    assert r.status_code == 200
+    for trecho in ("Bônus de transferência para a Azul", "Campanhas ativas", "Últimos 6 meses por programa",
+                   "Quando avisar", "Livelo", "Fontes"):
+        assert trecho in r.text, trecho
+    with SessionLocal() as s:
+        c = s.execute(select(BonusCampaign).where(BonusCampaign.program == "Livelo",
+                                                  BonusCampaign.bonus_pct == 100)).scalars().first()
+    assert logged.post(f"/bonus/{c.id}/transferi", headers={"HX-Request": "true"}).headers.get("HX-Refresh") == "true"
+    with SessionLocal() as s:
+        assert s.get(BonusCampaign, c.id).transferred
+
+
+def test_config_bonus(logged):
+    from app.db import BonusSettings
+    logged.post("/bonus/config", data={"min_pct": "100", "programs": ["Livelo", "Esfera"], "notify_email": "on"})
+    with SessionLocal() as s:
+        cfg = s.get(BonusSettings, 1)
+        assert cfg.min_pct == 100 and cfg.program_list == ["Livelo", "Esfera"]
+        assert cfg.notify_email and not cfg.notify_whatsapp and not cfg.active

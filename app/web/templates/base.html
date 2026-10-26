@@ -22,6 +22,7 @@
     <nav class="nav" aria-label="Principal">
       <a href="/" {% if nav == 'rotas' %}aria-current="page"{% endif %}>Rotas</a>
       <a href="/gerenciar" {% if nav == 'gerenciar' %}aria-current="page"{% endif %}>Gerenciar rotas</a>
+      <a href="/bonus" {% if nav == 'bonus' %}aria-current="page"{% endif %}>Bônus Azul</a>
     </nav>
     <div class="meta">
       {% if next_run %}<span>Próxima busca às {{ next_run }}</span>{% endif %}

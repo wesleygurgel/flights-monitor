@@ -136,7 +136,34 @@ def run() -> None:
                                 currency="BRL", airlines="GOL", stops=1,
                                 url="https://www.google.com/travel/flights", observed_at=at))
         s.commit()
-    print("Demo pronta: 3 rotas, 30 dias de histórico para NAT SAO.")
+    _bonus_demo()
+    print("Demo pronta: 3 rotas, 30 dias de histórico para NAT SAO e campanhas de bônus Azul.")
+
+
+def _bonus_demo() -> None:
+    """Campanhas passadas (histórico) + leitura dos feeds simulados (campanhas ativas)."""
+    from .bonus.service import run_bonus
+    from .db import BonusCampaign, BonusPost, BonusSettings
+    from .notifiers import ConsoleNotifier
+
+    with SessionLocal() as s:
+        for m in (BonusPost, BonusCampaign, BonusSettings):
+            s.execute(delete(m))
+        s.execute(delete(SearchRun).where(SearchRun.watch_id.like("bonus:%")))
+        now = utcnow()
+        for program, pct, days_ago, dur in [("Esfera", 120, 130, 4), ("Itaú", 120, 70, 5), ("Livelo", 90, 80, 10),
+                                            ("Esfera", 85, 95, 6), ("C6 Bank", 110, 160, 7), ("Livelo", 70, 30, 5)]:
+            first = now - timedelta(days=days_ago)
+            c = BonusCampaign(program=program, bonus_pct=pct, ends_on=(first + timedelta(days=dur)).date().isoformat(),
+                              first_seen_at=first, last_seen_at=first + timedelta(days=1),
+                              alerted_pct=pct if pct >= 80 else None, alerted_at=first if pct >= 80 else None)
+            s.add(c)
+            s.flush()
+            s.add(BonusPost(source="Passageiro de Primeira", url=f"https://passageirodeprimeira.com/?demo={c.id}",
+                            title=f"Azul Fidelidade oferece até {pct}% de bônus nas transferências de pontos {program}",
+                            published_at=first, program=program, bonus_pct=pct, ends_on=c.ends_on, campaign_id=c.id))
+        s.commit()
+    run_bonus([ConsoleNotifier()], trigger="schedule")
 
 
 if __name__ == "__main__":

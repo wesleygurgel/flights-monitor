@@ -1,6 +1,6 @@
 # flights-monitor
 
-Robô que monitora preços de passagens no Google Flights com datas flexíveis e alerta por e-mail/WhatsApp quando encontra um preço bom.
+Robô que monitora preços de passagens no Google Flights com datas flexíveis e bônus de transferência de pontos para a Azul, e avisa por e-mail/WhatsApp quando encontra algo bom.
 
 ## Como funciona
 
@@ -9,12 +9,22 @@ Robô que monitora preços de passagens no Google Flights com datas flexíveis e
 3. **Regras ("o que é barato")**, em duas fases:
    - **Fase 1** — histórico curto: alerta se preço ≤ `max_price` (teto fixo).
    - **Fase 2** — a partir de `min_samples` buscas detalhadas (padrão 20, cerca de 1 semana): o critério principal passa a ser preço ≥ `drop_pct`% abaixo do preço normal da rota, que é a mediana do menor preço de cada busca dos últimos 30 dias. O teto fixo continua valendo como gatilho absoluto.
-   - Bônus: se o Google marcar o preço como "baixo", também alerta.
+   - Extra: se o Google marcar o preço como "baixo", também alerta.
    - Mesma oferta não repete alerta em 24h, salvo nova queda ≥ 5%.
 4. **Alerta**: e-mail (SMTP) e/ou WhatsApp (Evolution API), com link direto para o Google Flights.
 5. **Saúde da coleta**: cada busca fica registrada. Se uma rota passar 2 rodadas seguidas sem preços (bloqueio do Google, mudança na página), chega um aviso pelos mesmos canais, e outro quando voltar a funcionar.
 
 O que ainda falta está em [PENDENCIAS.md](PENDENCIAS.md). A ideia do projeto, as decisões e o mapa do código estão em [CLAUDE.md](CLAUDE.md).
+
+## Bônus de transferência para a Azul
+
+A cada 2 horas o robô lê os feeds de 4 blogs de milhas, reconhece os posts sobre bônus de transferência para a Azul Fidelidade e junta os posts sobre a mesma campanha. Você recebe aviso quando aparece uma campanha acima do seu mínimo (padrão 80%) para os programas que você usa, de novo se o bônus subir e um lembrete no último dia, a menos que marque "Já transferi" no painel.
+
+```bash
+python -m app.main bonus --dry-run   # lê os blogs agora; alertas só no console
+```
+
+Fontes, horário e preferências: `BONUS_FEEDS` e `BONUS_CRON` no `.env`, e a aba Bônus Azul do painel.
 
 ## Painel web
 
@@ -23,6 +33,7 @@ Três telas, pensadas para funcionar bem no celular:
 - **Rotas** (`/`): a melhor oportunidade do momento e uma fita por rota (status, menor preço, últimos 30 dias, teto).
 - **Detalhe** (`/rotas/<id>`): botão "Buscar agora", preço normal, gráfico de 30 dias com alertas, calendário de qual dia de ida sai mais barato, melhores voos da última busca com link para comprar, histórico de alertas e das últimas buscas.
 - **Gerenciar rotas** (`/gerenciar`): criar, editar, pausar e excluir rotas.
+- **Bônus Azul** (`/bonus`): campanhas ativas, histórico de 6 meses por programa, preferências de aviso e status das fontes.
 
 As rotas ficam no banco. O `watchlist.yaml` só é lido na primeira execução, para popular o banco.
 O acesso é protegido por `APP_PASSWORD` (sem ela o painel fica aberto e um aviso aparece no log). Com a senha ligada, o painel só sobe com uma `SECRET_KEY` de pelo menos 32 caracteres.

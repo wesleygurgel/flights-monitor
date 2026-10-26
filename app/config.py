@@ -52,6 +52,7 @@ class Settings:
     request_delay: float = field(default_factory=lambda: float(env("REQUEST_DELAY", "4")))
     coarse_cron: str = field(default_factory=lambda: env("COARSE_CRON", "0 6 * * *"))
     fine_cron: str = field(default_factory=lambda: env("FINE_CRON", "0 8,14,20 * * *"))
+    bonus_cron: str = field(default_factory=lambda: env("BONUS_CRON", "20 7-23/2 * * *"))
     tz: str = field(default_factory=lambda: env("TZ", "America/Sao_Paulo"))
     watchlist_path: Path = field(default_factory=lambda: Path(env("WATCHLIST", str(ROOT / "watchlist.yaml"))))
 

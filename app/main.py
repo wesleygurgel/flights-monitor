@@ -5,6 +5,7 @@
   python -m app.main fine       # só busca fina nas últimas candidatas
   python -m app.main serve      # scheduler (modo contêiner)
   python -m app.main history    # últimos preços gravados
+  python -m app.main bonus      # lê os feeds de bônus de transferência para a Azul agora
   python -m app.main demo       # popula 30 dias de histórico fictício (só para testar o painel)
   python -m app.main web        # painel em http://localhost:8000
 
@@ -49,6 +50,12 @@ def cmd_fine(args) -> None:
     _each(args, coarse=False, fine=True, trigger=args.trigger)
 
 
+def cmd_bonus(args) -> None:
+    from .bonus.service import run_bonus
+    out = run_bonus(active_notifiers(args.dry_run), trigger=args.trigger)
+    log.info("bônus: %s", out)
+
+
 def cmd_serve(args) -> None:
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -57,7 +64,9 @@ def cmd_serve(args) -> None:
     args.trigger = "schedule"
     sched.add_job(lambda: cmd_coarse(args), CronTrigger.from_crontab(settings.coarse_cron), id="coarse")
     sched.add_job(lambda: cmd_fine(args), CronTrigger.from_crontab(settings.fine_cron), id="fine")
-    log.info("scheduler ativo: coarse='%s' fine='%s' tz=%s", settings.coarse_cron, settings.fine_cron, settings.tz)
+    sched.add_job(lambda: cmd_bonus(args), CronTrigger.from_crontab(settings.bonus_cron), id="bonus")
+    log.info("scheduler ativo: coarse='%s' fine='%s' bonus='%s' tz=%s", settings.coarse_cron, settings.fine_cron,
+             settings.bonus_cron, settings.tz)
     if args.run_now:
         cmd_run(args)
     sched.start()
@@ -89,7 +98,7 @@ def cmd_web(args) -> None:
 
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="monitor-passagens")
-    p.add_argument("cmd", choices=["run", "coarse", "fine", "serve", "history", "demo", "web"])
+    p.add_argument("cmd", choices=["run", "coarse", "fine", "serve", "history", "demo", "web", "bonus"])
     p.add_argument("--collector", default=settings.collector)
     p.add_argument("--trigger", default="cli", help=argparse.SUPPRESS)
     p.add_argument("--dry-run", action="store_true")
@@ -99,7 +108,7 @@ def main(argv=None) -> None:
     args = p.parse_args(argv)
     init_db()
     {"run": cmd_run, "coarse": cmd_coarse, "fine": cmd_fine, "serve": cmd_serve, "history": cmd_history,
-     "demo": cmd_demo, "web": cmd_web}[args.cmd](args)
+     "demo": cmd_demo, "web": cmd_web, "bonus": cmd_bonus}[args.cmd](args)
 
 
 if __name__ == "__main__":

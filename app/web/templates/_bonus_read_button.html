@@ -1,0 +1,10 @@
+{% if reading %}
+<div class="search-status" hx-get="/bonus/leitura" hx-trigger="every 3s" hx-swap="outerHTML" role="status">
+  <span class="spinner" aria-hidden="true"></span>
+  Lendo os blogs. A página atualiza sozinha.
+</div>
+{% else %}
+<form method="post" action="/bonus/buscar" hx-post="/bonus/buscar" hx-swap="outerHTML" style="display:contents">
+  <button type="submit" class="btn btn-text">Ler os blogs agora</button>
+</form>
+{% endif %}

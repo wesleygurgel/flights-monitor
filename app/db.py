@@ -118,6 +118,62 @@ class Alert(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class BonusPost(Base):
+    """Post de blog lido de um feed. Guardamos todos os que o parser reconheceu como bônus para a Azul."""
+
+    __tablename__ = "bonus_posts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), index=True)
+    url: Mapped[str] = mapped_column(String(512), index=True)  # um post com 2 programas vira 2 linhas
+    title: Mapped[str] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    program: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    bonus_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ends_on: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    last_day: Mapped[bool] = mapped_column(Boolean, default=False)
+    campaign_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+
+class BonusCampaign(Base):
+    """Uma campanha de bônus (programa de origem -> Azul), juntando os posts de vários blogs."""
+
+    __tablename__ = "bonus_campaigns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    program: Mapped[str] = mapped_column(String(32), index=True)
+    bonus_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ends_on: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    alerted_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    alerted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminder_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    transferred: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BonusSettings(Base):
+    """Preferências do monitor de bônus (uma linha só, id=1)."""
+
+    __tablename__ = "bonus_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    programs: Mapped[str] = mapped_column(Text, default="")  # vazio = todos
+    min_pct: Mapped[int] = mapped_column(Integer, default=80)
+    notify_email: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_whatsapp: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    @property
+    def program_list(self) -> list[str]:
+        return [p for p in self.programs.split(",") if p]
+
+    def wants(self, program: str) -> bool:
+        return not self.program_list or program in self.program_list
+
+
 _connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 engine = create_engine(settings.database_url, future=True, connect_args=_connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
@@ -140,8 +196,8 @@ def migrate() -> None:
     cfg.attributes["configure_logger"] = False
     tables = inspect(engine).get_table_names()
     if "routes" in tables and "alembic_version" not in tables:
-        Base.metadata.create_all(engine)
-        command.stamp(cfg, "0001")
+        Base.metadata.create_all(engine)  # cria o esquema atual inteiro...
+        command.stamp(cfg, "head")         # ...então ele já está na última versão
     command.upgrade(cfg, "head")
 
 
