@@ -22,6 +22,19 @@ services:
       - ./watchlist.yaml:/srv/watchlist.yaml:ro
     restart: unless-stopped
 
+  web:
+    build: .
+    command: ["python", "-m", "app.main", "web"]
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./watchlist.yaml:/srv/watchlist.yaml:ro
+    restart: unless-stopped
+
   # WhatsApp (Evolution API). Remova se for usar só e-mail no começo.
   evolution:
     image: atendai/evolution-api:latest

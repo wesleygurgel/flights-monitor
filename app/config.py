@@ -32,6 +32,9 @@ class Watch:
     min_samples: int = 60
     candidates: int = 5
     currency: str = "BRL"
+    active: bool = True
+    notify_email: bool = True
+    notify_whatsapp: bool = True
 
     @property
     def durations(self) -> list[int]:
@@ -52,7 +55,13 @@ class Settings:
     tz: str = field(default_factory=lambda: env("TZ", "America/Sao_Paulo"))
     watchlist_path: Path = field(default_factory=lambda: Path(env("WATCHLIST", str(ROOT / "watchlist.yaml"))))
 
-    def load_watches(self) -> list[Watch]:
+    app_password: str | None = field(default_factory=lambda: env("APP_PASSWORD"))
+    secret_key: str = field(default_factory=lambda: env("SECRET_KEY", "troque-esta-chave"))
+
+    def load_yaml_watches(self) -> list[Watch]:
+        """Lê o watchlist.yaml. Usado só para popular o banco na primeira execução."""
+        if not self.watchlist_path.exists():
+            return []
         data = yaml.safe_load(self.watchlist_path.read_text(encoding="utf-8")) or {}
         return [Watch(**w) for w in data.get("watches", [])]
 

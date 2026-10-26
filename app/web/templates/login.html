@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Entrar · Flights Monitor{% endblock %}
+{% block body %}
+<main class="login">
+  <form method="post" action="/entrar" class="panel">
+    <a href="/" class="brand">
+      <svg width="26" height="26" viewBox="0 0 32 32" fill="none" stroke="#A3195B" stroke-width="2" aria-hidden="true"><circle cx="16" cy="16" r="12"/><path d="M16 4v6M16 22v6M4 16h6M22 16h6"/></svg>
+      Flights Monitor
+    </a>
+    <div class="field {% if error %}has-err{% endif %}">
+      <label for="senha">Senha</label>
+      <input id="senha" name="senha" type="password" autocomplete="current-password" autofocus required>
+      {% if error %}<span class="err" role="alert">{{ error }}</span>{% endif %}
+    </div>
+    <button type="submit" class="btn btn-main">Entrar</button>
+  </form>
+</main>
+{% endblock %}

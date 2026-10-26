@@ -1,0 +1,128 @@
+"""Popula um banco com 30 dias de histórico fictício para ver o painel funcionando.
+
+    DATABASE_URL=sqlite:///./demo.db python -m app.main demo
+
+Não use no banco de produção: as rotas e preços gerados são inventados.
+"""
+from __future__ import annotations
+
+import random
+from datetime import date, timedelta
+
+from sqlalchemy import delete
+
+from .db import Alert, PriceSnapshot, Route, SessionLocal, init_db, utcnow
+
+AIRLINES = ["LATAM", "GOL", "Azul"]
+
+
+def _route(s, **kw) -> Route:
+    s.execute(delete(PriceSnapshot).where(PriceSnapshot.watch_id == kw["id"]))
+    s.execute(delete(Alert).where(Alert.watch_id == kw["id"]))
+    r = s.get(Route, kw["id"]) or Route(id=kw["id"])
+    for k, v in kw.items():
+        setattr(r, k, v)
+    s.add(r)
+    return r
+
+
+def _fine_history(s, r: Route, trend_from: float, trend_to: float, days: int, runs_per_day: int,
+                  dests: list[str], rng: random.Random, best_dates: tuple[str, str]) -> None:
+    now = utcnow()
+    for d in range(days, -1, -1):
+        for run in range(runs_per_day):
+            at = now - timedelta(days=d, hours=(runs_per_day - 1 - run) * 6)
+            if at > now:
+                continue
+            base = trend_to + (trend_from - trend_to) * (d / days) + rng.uniform(-45, 45)
+            for c in range(r.candidates):
+                out = date.fromisoformat(r.depart_from) + timedelta(days=rng.randrange(0, 55))
+                ret = out + timedelta(days=r.duration_days)
+                if d == 0 and c == 0:
+                    out, ret = date.fromisoformat(best_dates[0]), date.fromisoformat(best_dates[1])
+                for k, airline in enumerate(AIRLINES):
+                    price = base + c * 38 + k * 70 + rng.uniform(0, 25)
+                    if d == 0 and c == 0 and k == 0:
+                        price = trend_to
+                    s.add(PriceSnapshot(
+                        watch_id=r.id, source="fine", origin=r.origin, destination=dests[(c + k) % len(dests)] if not (d == 0 and c == 0) else dests[0],
+                        outbound_date=out.isoformat(), return_date=ret.isoformat(), price=round(price, 2),
+                        currency="BRL", airlines=airline, stops=0 if k != 1 else 1,
+                        url="https://www.google.com/travel/flights", observed_at=at,
+                    ))
+
+
+def _coarse_today(s, r: Route, dests: list[str], rng: random.Random, cheap: dict[int, float]) -> None:
+    at = utcnow() - timedelta(hours=2)
+    d0, d1 = date.fromisoformat(r.depart_from), date.fromisoformat(r.depart_to)
+    for dest in dests:
+        d = d0
+        while d <= d1:
+            weekend = d.weekday() in (4, 6)
+            p = 1060 + (260 if weekend else 0) + rng.uniform(0, 300) + (40 if dest != dests[0] else 0)
+            key = d.toordinal()
+            if key in cheap and dest == dests[0]:
+                p = cheap[key]
+            s.add(PriceSnapshot(
+                watch_id=r.id, source="coarse", origin=r.origin, destination=dest,
+                outbound_date=d.isoformat(), return_date=(d + timedelta(days=r.duration_days)).isoformat(),
+                price=round(p, 2), currency="BRL", observed_at=at,
+            ))
+            d += timedelta(days=1)
+
+
+def run() -> None:
+    init_db()
+    rng = random.Random(7)
+    with SessionLocal() as s:
+        sao = _route(s, id="nat-sao-mar-abr-2027", origin="NAT", destinations="GRU,CGH,VCP",
+                     depart_from="2027-03-01", depart_to="2027-04-30", duration_days=7, duration_tolerance=2,
+                     adults=1, max_stops=1, max_price=900, drop_pct=20, min_samples=60, candidates=5,
+                     currency="BRL", active=True, notify_email=True, notify_whatsapp=True, paused_at=None,
+                     created_at=utcnow() - timedelta(days=31))
+        lis = _route(s, id="nat-lis-demo", origin="NAT", destinations="LIS", depart_from="2027-05-01",
+                     depart_to="2027-06-15", duration_days=14, duration_tolerance=3, adults=1, max_stops=1,
+                     max_price=3800, drop_pct=20, min_samples=60, candidates=4, currency="BRL", active=True,
+                     notify_email=True, notify_whatsapp=False, paused_at=None, created_at=utcnow() - timedelta(days=2))
+        poa = _route(s, id="nat-poa-demo", origin="NAT", destinations="POA", depart_from="2027-07-01",
+                     depart_to="2027-07-31", duration_days=5, duration_tolerance=1, adults=1, max_stops=1,
+                     max_price=1100, drop_pct=20, min_samples=60, candidates=3, currency="BRL", active=False,
+                     notify_email=True, notify_whatsapp=True, paused_at=utcnow() - timedelta(days=6),
+                     created_at=utcnow() - timedelta(days=20))
+        s.flush()
+
+        _fine_history(s, sao, 1250, 812, 30, 3, ["GRU", "CGH", "VCP"], rng, ("2027-03-17", "2027-03-24"))
+        cheap = {date(2027, 3, 17).toordinal(): 812, date(2027, 3, 16).toordinal(): 860,
+                 date(2027, 4, 22).toordinal(): 885, date(2027, 4, 1).toordinal(): 1720}
+        _coarse_today(s, sao, ["GRU", "CGH", "VCP"], rng, cheap)
+        now = utcnow()
+        s.add(Alert(watch_id=sao.id, offer_key="NAT|GRU|2027-03-17|2027-03-24", price=870,
+                    reason="abaixo do teto de R$ 900 e 26% abaixo do normal de R$ 1.180",
+                    channels="email,whatsapp", sent_at=now - timedelta(hours=18)))
+        s.add(Alert(watch_id=sao.id, offer_key="NAT|GRU|2027-03-17|2027-03-24", price=812,
+                    reason="abaixo do teto de R$ 900, 31% abaixo do normal de R$ 1.180 e caiu de R$ 870",
+                    channels="email,whatsapp", sent_at=now - timedelta(hours=6)))
+
+        # Lisboa: 2 dias de coleta, ainda formando o preço normal (24 buscas)
+        for i in range(6):
+            at = now - timedelta(hours=i * 8)
+            for c in range(4):
+                out = date(2027, 5, 12) + timedelta(days=c * 3)
+                s.add(PriceSnapshot(watch_id=lis.id, source="fine", origin="NAT", destination="LIS",
+                                    outbound_date=out.isoformat(), return_date=(out + timedelta(days=14)).isoformat(),
+                                    price=4390 + i * 55 + c * 90, currency="BRL", airlines="TAP", stops=1,
+                                    url="https://www.google.com/travel/flights", observed_at=at))
+
+        # Porto Alegre: pausada, poucas buscas antigas
+        for i in range(5):
+            at = now - timedelta(days=10 - i)
+            s.add(PriceSnapshot(watch_id=poa.id, source="fine", origin="NAT", destination="POA",
+                                outbound_date="2027-07-10", return_date="2027-07-15", price=1610 - i * 20,
+                                currency="BRL", airlines="GOL", stops=1,
+                                url="https://www.google.com/travel/flights", observed_at=at))
+        s.commit()
+    print("Demo pronta: 3 rotas, 30 dias de histórico para NAT SAO.")
+
+
+if __name__ == "__main__":
+    run()

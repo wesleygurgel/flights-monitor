@@ -9,7 +9,7 @@ from .collectors import Collector, CoarsePrice
 from .config import Watch
 from .db import Alert, PriceSnapshot, SessionLocal
 from .notifiers import format_message, notify_all
-from .rules import evaluate, offer_key
+from .rules import evaluate, join_reasons, offer_key
 
 log = logging.getLogger(__name__)
 
@@ -39,9 +39,16 @@ def run_coarse(watch: Watch, collector: Collector) -> list[tuple[str, CoarsePric
     return found[: watch.candidates]
 
 
+def channels_for(watch: Watch, notifiers: list) -> list:
+    """Respeita os canais marcados na rota (o console de --dry-run passa sempre)."""
+    wanted = {"console": True, "email": watch.notify_email, "whatsapp": watch.notify_whatsapp}
+    return [n for n in notifiers if wanted.get(n.name, False)]
+
+
 def run_fine(watch: Watch, collector: Collector, candidates: list[tuple[str, CoarsePrice]], notifiers: list) -> int:
     """Busca detalhada nas candidatas, grava, avalia regras e dispara alertas. Retorna nº de alertas."""
     sent = 0
+    notifiers = channels_for(watch, notifiers)
     with SessionLocal() as s:
         for dest, c in candidates:
             try:
@@ -65,9 +72,9 @@ def run_fine(watch: Watch, collector: Collector, candidates: list[tuple[str, Coa
                      best.return_date, best.price, v.alert, v.reasons)
             if v.alert:
                 subject, body = format_message(watch, dest, best, v.reasons)
-                notify_all(notifiers, subject, body)
+                delivered = notify_all(notifiers, subject, body)
                 s.add(Alert(watch_id=watch.id, offer_key=offer_key(watch, dest, best), price=best.price,
-                            reason="; ".join(v.reasons)))
+                            reason=join_reasons(v.reasons), channels=",".join(delivered)))
                 s.commit()
                 sent += 1
     return sent

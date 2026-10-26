@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Gerenciar rotas · Flights Monitor{% endblock %}
+{% macro field(name, label, type='text', hint=None, attrs='') -%}
+<div class="field {% if errors[name] %}has-err{% endif %}">
+  <label for="{{ name }}">{{ label }}</label>
+  <input id="{{ name }}" name="{{ name }}" type="{{ type }}" value="{{ f[name] }}" {{ attrs|safe }}{% if errors[name] %} aria-invalid="true" aria-describedby="{{ name }}-err"{% endif %}>
+  {% if errors[name] %}<span class="err" id="{{ name }}-err">{{ errors[name] }}</span>{% elif hint %}<span class="hint">{{ hint }}</span>{% endif %}
+</div>
+{%- endmacro %}
+{% block main %}
+<div class="manage">
+  <aside aria-labelledby="lista">
+    <div class="strips-head">
+      <h1 id="lista" class="section-title" style="font-size:32px">Suas rotas</h1>
+      <a href="/gerenciar/nova" class="btn btn-text">Nova rota</a>
+    </div>
+    {% if routes %}
+    <ul class="panel route-list">
+      {% for r, code in routes %}
+      <li>
+        <a href="/gerenciar/{{ r.id }}" {% if selected and selected.id == r.id %}aria-current="true"{% endif %}>
+          <span><span class="rcode">{{ code }}</span><span class="rsub">{{ fmt.d_short(r.depart_from) }} a {{ fmt.d_short(r.depart_to) }} de {{ r.depart_to[:4] }}</span></span>
+          <span class="rstate {% if not r.active %}off{% endif %}">{{ 'Ativa' if r.active else 'Pausada' }}</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted" style="margin:0">Nenhuma rota ainda. Preencha o formulário ao lado para criar a primeira.</p>
+    {% endif %}
+  </aside>
+
+  <form method="post" action="/gerenciar/salvar" class="panel route-form" aria-labelledby="editar" novalidate>
+    <input type="hidden" name="id" value="{{ f.id }}">
+    <div>
+      <h2 id="editar" class="section-title" style="font-size:32px">{{ title }}</h2>
+      <p class="lead">As mudanças valem a partir da próxima busca.</p>
+    </div>
+    {% if saved %}<p class="notice" role="status" style="margin:0">Rota salva.</p>{% endif %}
+    {% if errors %}<p class="notice bad" role="alert" style="margin:0">Corrija os campos marcados para salvar a rota.</p>{% endif %}
+
+    <fieldset>
+      <legend>Para onde</legend>
+      <div class="grid">
+        {{ field('origin', 'Saindo de', hint='Código do aeroporto, como NAT', attrs='maxlength="3" autocapitalize="characters" autocomplete="off"') }}
+        {{ field('destinations', 'Chegando em', hint='Um ou mais, separados por vírgula: GRU, CGH, VCP', attrs='autocapitalize="characters" autocomplete="off"') }}
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Quando</legend>
+      <div class="grid">
+        {{ field('depart_from', 'Ida a partir de', type='date') }}
+        {{ field('depart_to', 'Ida até', type='date') }}
+        {{ field('duration_days', 'Dias de viagem', type='number', attrs='min="1" max="60" inputmode="numeric"') }}
+        <div class="field {% if errors.duration_tolerance %}has-err{% endif %}">
+          <label for="duration_tolerance">Variação aceita</label>
+          <select id="duration_tolerance" name="duration_tolerance">
+            {% for t, lbl in [(0, 'Exatamente essa duração'), (1, '1 dia a mais ou a menos'), (2, '2 dias a mais ou a menos'), (3, '3 dias a mais ou a menos')] %}
+            <option value="{{ t }}" {% if f.duration_tolerance|string == t|string %}selected{% endif %}>{{ lbl }}</option>
+            {% endfor %}
+          </select>
+          {% if errors.duration_tolerance %}<span class="err">{{ errors.duration_tolerance }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="grid">
+        {{ field('adults', 'Adultos', type='number', attrs='min="1" max="9" inputmode="numeric"') }}
+        <div class="field">
+          <label for="max_stops">Escalas</label>
+          <select id="max_stops" name="max_stops">
+            {% for val, lbl in [('0', 'Só voo direto'), ('1', 'Até 1 escala'), ('2', 'Até 2 escalas'), ('', 'Qualquer')] %}
+            <option value="{{ val }}" {% if f.max_stops|string == val %}selected{% endif %}>{{ lbl }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend style="margin-bottom:4px">O que é barato para você</legend>
+      <p class="lead" style="margin:0">Você recebe alerta quando o preço ficar abaixo do teto. Depois de juntar buscas suficientes, também quando cair bem abaixo do preço normal da rota.</p>
+      <div class="grid">
+        <div class="field {% if errors.max_price %}has-err{% endif %}">
+          <label for="max_price">Teto ida e volta, total</label>
+          <div class="affix"><span class="muted">R$</span><input id="max_price" name="max_price" value="{{ f.max_price }}" inputmode="numeric" class="cap" placeholder="900"></div>
+          {% if errors.max_price %}<span class="err">{{ errors.max_price }}</span>{% else %}<span class="hint">Deixe vazio para usar só o preço normal</span>{% endif %}
+        </div>
+        <div class="field {% if errors.drop_pct %}has-err{% endif %}">
+          <label for="drop_pct">Abaixo do normal em pelo menos</label>
+          <div class="affix"><input id="drop_pct" name="drop_pct" value="{{ f.drop_pct }}" inputmode="numeric" placeholder="20"><span class="muted">%</span></div>
+          {% if errors.drop_pct %}<span class="err">{{ errors.drop_pct }}</span>{% else %}<span class="hint">Deixe vazio para usar só o teto</span>{% endif %}
+        </div>
+        {{ field('min_samples', 'Buscas antes de usar o normal', type='number', hint='60 dá cerca de 4 dias de coleta', attrs='min="1" inputmode="numeric"') }}
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Avisar por</legend>
+      <div class="checks">
+        <label><input type="checkbox" name="notify_email" {% if f.notify_email %}checked{% endif %}>E-mail</label>
+        <label><input type="checkbox" name="notify_whatsapp" {% if f.notify_whatsapp %}checked{% endif %}>WhatsApp</label>
+      </div>
+    </fieldset>
+
+    <details>
+      <summary>Ajustes da busca</summary>
+      <div class="grid" style="margin-top:12px">
+        {{ field('candidates', 'Datas checadas em detalhe por busca', type='number', hint='Mais datas pegam mais ofertas, mas aumentam o risco de bloqueio', attrs='min="1" max="20" inputmode="numeric"') }}
+      </div>
+    </details>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-main">Salvar rota</button>
+      <a href="{{ '/rotas/' ~ selected.id if selected else '/' }}" class="btn">Cancelar</a>
+      {% if selected %}
+      <button type="submit" class="btn btn-danger push" formaction="/rotas/{{ selected.id }}/excluir" formnovalidate
+              onclick="return confirm('Excluir {{ fmt.route_code(selected.origin, selected.dest_list) }} e todo o histórico de preços?')">Excluir rota</button>
+      {% endif %}
+    </div>
+  </form>
+</div>
+{% endblock %}

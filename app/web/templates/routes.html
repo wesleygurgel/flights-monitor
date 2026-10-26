@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Rotas · Flights Monitor{% endblock %}
+{% block main %}
+
+{% if hero.kind == 'empty' %}
+<section class="panel empty" aria-labelledby="vazio">
+  <h1 id="vazio" class="section-title">Cadastre a primeira rota para começar.</h1>
+  <p class="muted" style="margin:0;max-width:60ch">Diga de onde sai, para onde vai, o período de ida e o que é um preço bom para você. As buscas rodam sozinhas e você recebe alerta quando aparecer algo barato.</p>
+  <a href="/gerenciar/nova" class="btn btn-main">Adicionar rota</a>
+</section>
+{% else %}
+
+<section class="hero" aria-labelledby="destaque">
+  <div class="hero-text">
+    <p class="hero-kicker">{% if hero.kind == 'deal' %}Melhor oportunidade agora{% else %}Situação agora{% endif %}</p>
+    <h1 id="destaque">{{ hero.title }}</h1>
+    <p class="detail">{{ hero.detail }}</p>
+  </div>
+  {% if hero.kind == 'deal' %}
+  <div class="hero-actions">
+    <a href="{{ hero.url }}" class="btn btn-buy" target="_blank" rel="noopener">Comprar no Google Flights</a>
+    <a href="/rotas/{{ hero.view.route.id }}" class="btn btn-line">Ver histórico</a>
+  </div>
+  {% endif %}
+</section>
+
+<section class="strips" aria-labelledby="fitas">
+  <div class="strips-head">
+    <h2 id="fitas" class="section-title">Rotas monitoradas</h2>
+    <a href="/gerenciar/nova" class="btn btn-text">Adicionar rota</a>
+  </div>
+
+  {% for v in views %}
+  <article class="panel strip" aria-labelledby="r-{{ v.route.id }}">
+    <div class="status status-{{ v.status }}">
+      <b>{{ v.status_label }}</b>
+      <span>{{ v.status_sub }}</span>
+    </div>
+
+    <div class="ident">
+      <div class="code" id="r-{{ v.route.id }}">{{ v.code }}</div>
+      <div class="sub">{{ v.dests }}</div>
+      <div class="sub">{{ v.window }}</div>
+    </div>
+
+    <div class="price">
+      <div class="label">Menor preço</div>
+      <div class="price-big {% if v.is_bargain %}is-deal{% elif v.status == 'paused' %}is-off{% endif %}">{{ fmt.brl(v.best.price) if v.best else '—' }}</div>
+      <div class="sub muted" style="font-size:14px">{{ v.offer_line }}</div>
+    </div>
+
+    <div class="trend">
+      <div class="trend-head">
+        <span>{% if v.spark %}Últimos 30 dias{% elif v.phase == 1 and v.route.drop_pct %}Formando o preço normal{% else %}Sem histórico ainda{% endif %}</span>
+        {% if v.route.max_price %}<span class="cap">teto {{ fmt.brl(v.route.max_price) }}</span>{% endif %}
+      </div>
+      {% if v.spark %}
+      <svg class="spark" viewBox="0 0 {{ v.spark.w }} {{ v.spark.h }}" preserveAspectRatio="none" role="img" aria-label="Menor preço por dia nos últimos 30 dias{% if v.route.max_price %}, com a linha do teto{% endif %}">
+        {% if v.spark.cap_y is not none %}<line x1="0" x2="{{ v.spark.w }}" y1="{{ v.spark.cap_y }}" y2="{{ v.spark.cap_y }}" stroke="#A3195B" stroke-width="1.5" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>{% endif %}
+        <polyline points="{{ v.spark.points }}" fill="none" stroke="#1F5D99" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      </svg>
+      {% endif %}
+      {% if v.phase == 1 and v.route.drop_pct and v.status != 'paused' %}
+      <div>
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="{{ v.route.min_samples }}" aria-valuenow="{{ v.samples }}" aria-label="Buscas para formar o preço normal"><span style="width: {{ [100, (v.samples / v.route.min_samples * 100)|round|int]|min }}%"></span></div>
+        <div class="label" style="margin-top:6px">{{ v.samples }} de {{ v.route.min_samples }} buscas</div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="end">
+      <div class="label">{{ v.alert_line }}</div>
+      <a href="/rotas/{{ v.route.id }}">Abrir rota</a>
+    </div>
+  </article>
+  {% endfor %}
+</section>
+
+<p class="footnote">Enquanto uma rota tem pouco histórico, o alerta usa só o teto que você definiu. Depois do número de buscas configurado, passa a valer também a queda em relação ao preço normal da rota.</p>
+{% endif %}
+{% endblock %}

@@ -5,6 +5,8 @@
   python -m app.main fine       # só busca fina nas últimas candidatas
   python -m app.main serve      # scheduler (modo contêiner)
   python -m app.main history    # últimos preços gravados
+  python -m app.main demo       # popula 30 dias de histórico fictício (só para testar o painel)
+  python -m app.main web        # painel em http://localhost:8000
 
 Flags: --collector mock|google_flights   --dry-run (alertas só no console)
 """
@@ -16,7 +18,7 @@ import sys
 
 from .collectors import get_collector
 from .config import settings
-from .db import init_db
+from .db import active_watches, init_db
 from .notifiers import active_notifiers
 from .pipeline import last_candidates, run_coarse, run_fine
 
@@ -27,7 +29,7 @@ log = logging.getLogger("main")
 def cmd_run(args) -> None:
     collector = get_collector(args.collector)
     notifiers = active_notifiers(args.dry_run)
-    for w in settings.load_watches():
+    for w in active_watches():
         cands = run_coarse(w, collector)
         n = run_fine(w, collector, cands, notifiers)
         log.info("%s: %d candidatas, %d alertas", w.id, len(cands), n)
@@ -35,7 +37,7 @@ def cmd_run(args) -> None:
 
 def cmd_coarse(args) -> None:
     collector = get_collector(args.collector)
-    for w in settings.load_watches():
+    for w in active_watches():
         cands = run_coarse(w, collector)
         log.info("%s: candidatas %s", w.id, [(d, c.outbound_date, c.price) for d, c in cands])
 
@@ -43,7 +45,7 @@ def cmd_coarse(args) -> None:
 def cmd_fine(args) -> None:
     collector = get_collector(args.collector)
     notifiers = active_notifiers(args.dry_run)
-    for w in settings.load_watches():
+    for w in active_watches():
         cands = last_candidates(w, w.candidates)
         if not cands:
             log.warning("%s: sem varredura grossa anterior; rode 'coarse' antes", w.id)
@@ -79,16 +81,28 @@ def cmd_history(args) -> None:
               f"{r.outbound_date}..{r.return_date} {r.currency} {r.price:.0f} {r.airlines or ''}")
 
 
+def cmd_demo(args) -> None:
+    from .demo import run
+    run()
+
+
+def cmd_web(args) -> None:
+    import uvicorn
+    uvicorn.run("app.web.app:app", host="0.0.0.0", port=args.port, reload=False)
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="monitor-passagens")
-    p.add_argument("cmd", choices=["run", "coarse", "fine", "serve", "history"])
+    p.add_argument("cmd", choices=["run", "coarse", "fine", "serve", "history", "demo", "web"])
     p.add_argument("--collector", default="google_flights")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--run-now", action="store_true", help="serve: executa um ciclo completo ao iniciar")
     p.add_argument("--limit", type=int, default=30)
+    p.add_argument("--port", type=int, default=8000)
     args = p.parse_args(argv)
     init_db()
-    {"run": cmd_run, "coarse": cmd_coarse, "fine": cmd_fine, "serve": cmd_serve, "history": cmd_history}[args.cmd](args)
+    {"run": cmd_run, "coarse": cmd_coarse, "fine": cmd_fine, "serve": cmd_serve, "history": cmd_history,
+     "demo": cmd_demo, "web": cmd_web}[args.cmd](args)
 
 
 if __name__ == "__main__":

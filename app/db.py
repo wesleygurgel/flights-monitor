@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, Integer, String, Text, create_engine, select, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, create_engine, select, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session, sessionmaker
 
-from .config import settings
+from .config import Watch, settings
 
 
 def utcnow() -> datetime:
@@ -19,6 +19,47 @@ def as_utc(dt: datetime) -> datetime:
 
 class Base(DeclarativeBase):
     pass
+
+
+class Route(Base):
+    """Rota monitorada. Fonte da verdade da watchlist (o YAML só popula o banco na primeira vez)."""
+
+    __tablename__ = "routes"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    origin: Mapped[str] = mapped_column(String(8))
+    destinations: Mapped[str] = mapped_column(String(128))  # "GRU,CGH,VCP"
+    depart_from: Mapped[str] = mapped_column(String(10))
+    depart_to: Mapped[str] = mapped_column(String(10))
+    duration_days: Mapped[int] = mapped_column(Integer, default=7)
+    duration_tolerance: Mapped[int] = mapped_column(Integer, default=0)
+    adults: Mapped[int] = mapped_column(Integer, default=1)
+    max_stops: Mapped[int | None] = mapped_column(Integer, nullable=True, default=1)
+    max_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    drop_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    min_samples: Mapped[int] = mapped_column(Integer, default=60)
+    candidates: Mapped[int] = mapped_column(Integer, default=5)
+    currency: Mapped[str] = mapped_column(String(3), default="BRL")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_email: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_whatsapp: Mapped[bool] = mapped_column(Boolean, default=True)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    @property
+    def dest_list(self) -> list[str]:
+        return [d for d in self.destinations.split(",") if d]
+
+    def to_watch(self) -> Watch:
+        return Watch(
+            id=self.id, origin=self.origin, destinations=self.dest_list,
+            depart_from=self.depart_from, depart_to=self.depart_to,
+            duration_days=self.duration_days, duration_tolerance=self.duration_tolerance,
+            adults=self.adults, max_stops=self.max_stops, max_price=self.max_price,
+            drop_pct=self.drop_pct, min_samples=self.min_samples, candidates=self.candidates,
+            currency=self.currency, active=self.active,
+            notify_email=self.notify_email, notify_whatsapp=self.notify_whatsapp,
+        )
 
 
 class PriceSnapshot(Base):
@@ -50,6 +91,7 @@ class Alert(Base):
     offer_key: Mapped[str] = mapped_column(String(64), index=True)  # origin|dest|out|ret
     price: Mapped[float] = mapped_column(Float)
     reason: Mapped[str] = mapped_column(Text)
+    channels: Mapped[str | None] = mapped_column(String(64), nullable=True)  # "email,whatsapp"
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -59,6 +101,31 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 def init_db() -> None:
     Base.metadata.create_all(engine)
+    seed_routes_from_yaml()
+
+
+def seed_routes_from_yaml() -> int:
+    """Na primeira execução (tabela vazia), importa as rotas do watchlist.yaml."""
+    with SessionLocal() as s:
+        if s.execute(select(func.count()).select_from(Route)).scalar_one():
+            return 0
+        watches = settings.load_yaml_watches()
+        for w in watches:
+            s.add(Route(
+                id=w.id, origin=w.origin, destinations=",".join(w.destinations),
+                depart_from=w.depart_from, depart_to=w.depart_to, duration_days=w.duration_days,
+                duration_tolerance=w.duration_tolerance, adults=w.adults, max_stops=w.max_stops,
+                max_price=w.max_price, drop_pct=w.drop_pct, min_samples=w.min_samples,
+                candidates=w.candidates, currency=w.currency,
+            ))
+        s.commit()
+        return len(watches)
+
+
+def active_watches() -> list[Watch]:
+    with SessionLocal() as s:
+        rows = s.execute(select(Route).where(Route.active.is_(True)).order_by(Route.created_at)).scalars().all()
+        return [r.to_watch() for r in rows]
 
 
 def baseline(s: Session, watch_id: str, days: int = 30) -> tuple[float | None, int]:

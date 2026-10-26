@@ -13,13 +13,17 @@ log = logging.getLogger(__name__)
 
 
 def format_message(watch: Watch, destination: str, o: Offer, reasons: list[str]) -> tuple[str, str]:
-    subject = f"✈️ {watch.origin}→{destination} por {watch.currency} {o.price:.0f} ({o.outbound_date} a {o.return_date})"
-    stops = "direto" if o.stops == 0 else f"{o.stops} parada(s)"
+    from .rules import join_reasons, money
+    from .web.fmt import city, d_long
+
+    price = money(o.price, watch.currency)
+    subject = f"{watch.origin} para {destination} por {price}, ida {d_long(o.outbound_date)}"
+    stops = "sem escalas" if o.stops == 0 else ("1 escala" if o.stops == 1 else f"{o.stops} escalas")
     body = (
-        f"*{watch.origin} → {destination}* — *{watch.currency} {o.price:.0f}*\n"
-        f"Ida {o.outbound_date} · Volta {o.return_date}\n"
-        f"{o.airlines} · {stops}\n"
-        f"Motivo: {'; '.join(reasons)}\n\n"
+        f"*{city(watch.origin)} para {city(destination)} ({destination}) por {price}*\n"
+        f"Ida {d_long(o.outbound_date)}, volta {d_long(o.return_date)}\n"
+        f"{o.airlines.split(',')[0]}, {stops}\n"
+        f"Por que avisei: {join_reasons(reasons)}.\n\n"
         f"Comprar: {o.url}"
     )
     return subject, body
@@ -79,10 +83,14 @@ def active_notifiers(dry_run: bool = False) -> list:
     return ns or [ConsoleNotifier()]
 
 
-def notify_all(notifiers: list, subject: str, body: str) -> None:
+def notify_all(notifiers: list, subject: str, body: str) -> list[str]:
+    """Envia por todos os canais; retorna os nomes dos que funcionaram."""
+    ok: list[str] = []
     for n in notifiers:
         try:
             n.send(subject, body)
+            ok.append(n.name)
             log.info("alerta enviado via %s", n.name)
         except Exception as e:  # um canal falhar não derruba os outros
             log.exception("falha ao enviar via %s: %s", n.name, e)
+    return ok

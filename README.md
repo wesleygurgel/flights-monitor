@@ -13,6 +13,24 @@ Robô que monitora preços de passagens no Google Flights com datas flexíveis e
    - Mesma oferta não repete alerta em 24h, salvo nova queda ≥ 5%.
 4. **Alerta**: e-mail (SMTP) e/ou WhatsApp (Evolution API), com link direto para o Google Flights.
 
+## Painel web
+
+Três telas, pensadas para funcionar bem no celular:
+
+- **Rotas** (`/`): a melhor oportunidade do momento e uma fita por rota (status, menor preço, últimos 30 dias, teto).
+- **Detalhe** (`/rotas/<id>`): preço normal, gráfico de 30 dias com alertas, calendário de qual dia de ida sai mais barato, melhores voos da última busca com link para comprar e histórico de alertas.
+- **Gerenciar rotas** (`/gerenciar`): criar, editar, pausar e excluir rotas.
+
+As rotas ficam no banco. O `watchlist.yaml` só é lido na primeira execução, para popular o banco.
+O acesso é protegido por `APP_PASSWORD` (sem ela o painel fica aberto e um aviso aparece no log).
+
+Para ver o painel com dados fictícios, sem esperar a coleta:
+
+```bash
+DATABASE_URL=sqlite:///./demo.db APP_PASSWORD=teste python -m app.main demo
+DATABASE_URL=sqlite:///./demo.db APP_PASSWORD=teste python -m app.main web   # http://localhost:8000
+```
+
 ## Rodar sem Docker (teste rápido)
 
 ```bash
@@ -30,6 +48,7 @@ python -m app.main history
 cp .env.example .env   # preencha SMTP e/ou Evolution
 docker compose up -d --build
 docker compose logs -f monitor
+# painel em http://localhost:8000
 ```
 
 ### WhatsApp (Evolution API)
@@ -40,7 +59,7 @@ docker compose logs -f monitor
 
 ## Ajustes
 
-- `watchlist.yaml`: rotas, janela de datas, duração ± tolerância, teto, nº de candidatas.
+- Rotas: pelo painel, em Gerenciar rotas.
 - `COARSE_CRON` / `FINE_CRON` no `.env`: horários (fuso `TZ`).
 - `REQUEST_DELAY`: pausa entre chamadas. Se aparecer HTTP 429, aumente e reduza `candidates`.
 
@@ -49,3 +68,10 @@ docker compose logs -f monitor
 - A biblioteca usa o RPC interno do Google Flights (não oficial); pode quebrar sem aviso. O coletor é um adaptador: trocar/adicionar fontes é implementar `coarse()` e `fine()` em `app/collectors.py`.
 - IPs de datacenter costumam receber 429. Rode em casa, numa VPS pequena, ou use proxy residencial.
 - A regra relativa só entra após `min_samples` amostras (padrão 60 ≈ 4 dias com 5 candidatas x 3 buscas/dia).
+
+## Testes
+
+```bash
+pip install pytest
+python -m pytest -q
+```

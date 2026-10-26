@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Flights Monitor{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body>
+{% block body %}
+<header class="topbar">
+  <div class="wrap">
+    <a href="/" class="brand">
+      <svg width="26" height="26" viewBox="0 0 32 32" fill="none" stroke="#A3195B" stroke-width="2" aria-hidden="true"><circle cx="16" cy="16" r="12"/><path d="M16 4v6M16 22v6M4 16h6M22 16h6"/></svg>
+      Flights Monitor
+    </a>
+    <nav class="nav" aria-label="Principal">
+      <a href="/" {% if nav == 'rotas' %}aria-current="page"{% endif %}>Rotas</a>
+      <a href="/gerenciar" {% if nav == 'gerenciar' %}aria-current="page"{% endif %}>Gerenciar rotas</a>
+    </nav>
+    <div class="meta">
+      {% if next_run %}<span>Próxima busca às {{ next_run }}</span>{% endif %}
+      <form method="post" action="/sair"><button type="submit" class="btn btn-line btn-sm">Sair</button></form>
+    </div>
+  </div>
+</header>
+<main class="wrap page">
+{% block main %}{% endblock %}
+</main>
+{% endblock %}
+</body>
+</html>

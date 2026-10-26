@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% set r = v.route %}
+{% block title %}{{ v.code }} · Flights Monitor{% endblock %}
+{% block main %}
+<a href="/" class="back">Voltar para rotas</a>
+
+<section class="detail-head">
+  <div>
+    <h1>{{ v.code }}</h1>
+    <p>{{ fmt.city(r.origin) }} para {{ v.dests }}. {{ v.window }}, {{ r.adults }} adulto{% if r.adults > 1 %}s{% endif %}{% if r.max_stops == 0 %}, só voo direto{% elif r.max_stops is not none %}, até {{ r.max_stops }} escala{% if r.max_stops > 1 %}s{% endif %}{% endif %}.</p>
+  </div>
+  <div class="detail-actions">
+    <a href="/gerenciar/{{ r.id }}" class="btn btn-line">Editar rota</a>
+    {% include "_pause_button.html" %}
+  </div>
+</section>
+
+<section class="panel kpis" aria-label="Números da rota">
+  <div>
+    <div class="kpi-label">Menor preço agora</div>
+    <div class="kpi-value {% if v.is_bargain %}is-deal{% endif %}">{{ fmt.brl(v.best.price) if v.best else '—' }}</div>
+    <div class="kpi-sub">{{ v.offer_line }}</div>
+  </div>
+  <div>
+    <div class="kpi-label">Preço normal da rota</div>
+    <div class="kpi-value">{{ fmt.brl(v.ref) }}</div>
+    <div class="kpi-sub">{% if v.ref %}Mediana de {{ fmt.num(v.samples) }} preço{% if v.samples != 1 %}s{% endif %} em 30 dias{% else %}Sem buscas ainda{% endif %}</div>
+  </div>
+  <div>
+    <div class="kpi-label">Teto que você definiu</div>
+    <div class="kpi-value">{{ fmt.brl(r.max_price) }}</div>
+    <div class="kpi-sub">{% if r.max_price %}Alerta sempre que ficar abaixo{% else %}Sem teto, só a regra do normal{% endif %}</div>
+  </div>
+  <div>
+    <div class="kpi-label">Regra de alerta</div>
+    {% if v.phase == 2 %}
+    <div class="kpi-value">{{ r.drop_pct|int }}% abaixo</div>
+    <div class="kpi-sub">do normal, além do teto</div>
+    {% elif r.drop_pct %}
+    <div class="kpi-value">Só o teto</div>
+    <div class="kpi-sub">{{ v.samples }} de {{ r.min_samples }} buscas para usar o normal</div>
+    {% else %}
+    <div class="kpi-value">Só o teto</div>
+    <div class="kpi-sub">Queda sobre o normal desligada</div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel card" aria-labelledby="hist">
+  <div class="card-head">
+    <h2 id="hist" class="section-title">Preço ao longo dos últimos 30 dias</h2>
+    <ul class="legend">
+      <li><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" stroke="#1F5D99" stroke-width="2.5"/></svg>Menor preço do dia</li>
+      {% if chart and chart.ref_y is not none %}<li><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" stroke="#6B7A88" stroke-width="2" stroke-dasharray="3 3"/></svg>Preço normal</li>{% endif %}
+      {% if r.max_price %}<li><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" stroke="#A3195B" stroke-width="2" stroke-dasharray="6 4"/></svg>Teto</li>{% endif %}
+      <li><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="#A3195B"/></svg>Alerta enviado</li>
+    </ul>
+  </div>
+  {% if chart %}
+  <svg class="chart" viewBox="0 0 1000 300" role="img" aria-label="Menor preço por dia nos últimos 30 dias">
+    {% for t in chart.y_ticks %}
+    <line x1="{{ chart.left }}" x2="{{ chart.right }}" y1="{{ t.pos }}" y2="{{ t.pos }}" stroke="#E3E9E7"/>
+    <text x="{{ chart.left - 8 }}" y="{{ t.pos + 5 }}" text-anchor="end">{{ t.label }}</text>
+    {% endfor %}
+    {% if chart.ref_y is not none %}<line x1="{{ chart.left }}" x2="{{ chart.right }}" y1="{{ chart.ref_y }}" y2="{{ chart.ref_y }}" stroke="#6B7A88" stroke-width="2" stroke-dasharray="3 3"/>{% endif %}
+    {% if chart.cap_y is not none %}<line x1="{{ chart.left }}" x2="{{ chart.right }}" y1="{{ chart.cap_y }}" y2="{{ chart.cap_y }}" stroke="#A3195B" stroke-width="2" stroke-dasharray="8 5"/>{% endif %}
+    <polyline points="{{ chart.points }}" fill="none" stroke="#1F5D99" stroke-width="2.5" stroke-linejoin="round"/>
+    {% for a in chart.alerts %}<circle cx="{{ a.x }}" cy="{{ a.y }}" r="7" fill="#A3195B" stroke="#FBFCFB" stroke-width="2"/>{% endfor %}
+    {% for t in chart.x_ticks %}<text x="{{ t.pos }}" y="{{ chart.label_y }}" text-anchor="{{ 'end' if loop.last else 'middle' }}">{{ t.label }}</text>{% endfor %}
+  </svg>
+  {% else %}
+  <p class="none-yet" style="padding:0">O gráfico aparece depois de dois dias de buscas.</p>
+  {% endif %}
+</section>
+
+<section class="panel card" aria-labelledby="cal">
+  <div class="card-head">
+    <div>
+      <h2 id="cal" class="section-title">Qual dia de ida sai mais barato</h2>
+      <p>Viagem de {{ r.duration_days }} dias{% if coarse_at %}, varredura de {{ coarse_at }}{% endif %}.{% if r.max_price %} Dias em magenta estão abaixo do teto.{% endif %}</p>
+    </div>
+    {% if calendar %}
+    <div class="cal-legend" aria-hidden="true">
+      <span>mais barato</span>
+      {% if r.max_price %}<i class="lvl-cap"></i>{% endif %}<i class="lvl-1"></i><i class="lvl-2"></i><i class="lvl-3"></i><i class="lvl-4"></i>
+      <span>mais caro</span>
+    </div>
+    {% endif %}
+  </div>
+  {% if calendar %}
+  <div class="months">
+    {% for m in calendar %}
+    <div class="month">
+      <h3>{{ m.name }}</h3>
+      <div class="weekdays" aria-hidden="true"><span>seg</span><span>ter</span><span>qua</span><span>qui</span><span>sex</span><span>sáb</span><span>dom</span></div>
+      <div class="days">
+        {% for c in m.cells %}
+        {% if c.lvl == 'blank' %}<div class="day lvl-blank" aria-hidden="true"></div>
+        {% else %}<div class="day lvl-{{ c.lvl }}"{% if c.price %} title="{{ c.day }}: R$ {{ c.price }}"{% endif %}><span>{{ c.day }}</span><b>{{ c.price }}</b></div>{% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="none-yet" style="padding:0">O calendário aparece depois da primeira varredura do dia.</p>
+  {% endif %}
+</section>
+
+<section aria-labelledby="ofertas" style="display:flex;flex-direction:column;gap:12px">
+  <h2 id="ofertas" class="section-title">Melhores voos da última busca</h2>
+  <div class="panel table-box">
+    {% if offers %}
+    <table class="offers">
+      <thead><tr>
+        <th scope="col">Ida</th><th scope="col">Volta</th><th scope="col">Chegada</th><th scope="col">Companhia</th>
+        <th scope="col">Escalas</th><th scope="col" class="r">Preço</th><th scope="col" class="r">Comparado ao normal</th>
+        <th scope="col"><span class="visually-hidden">Comprar</span></th>
+      </tr></thead>
+      <tbody>
+      {% for o in offers %}
+      {% set deal = (r.max_price and o.price <= r.max_price) or (v.phase == 2 and o.price <= v.ref * (1 - r.drop_pct / 100)) %}
+      <tr>
+        <td>{{ fmt.d_short(o.outbound_date) }}</td>
+        <td>{{ fmt.d_short(o.return_date) }}</td>
+        <td>{{ fmt.airport(o.destination) }}</td>
+        <td>{{ (o.airlines or '').split(',')[0] }}</td>
+        <td>{{ fmt.stops(o.stops)|capitalize }}</td>
+        <td class="r p {% if deal %}is-deal{% endif %}">{{ fmt.brl(o.price) }}</td>
+        <td class="r num {% if deal %}is-deal{% endif %}">{% if v.ref %}{{ ((o.price / v.ref - 1) * 100)|round|int }}%{% else %}—{% endif %}</td>
+        <td class="r">{% if o.url %}<a href="{{ o.url }}" target="_blank" rel="noopener">Comprar</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="none-yet">Nenhuma busca detalhada ainda. Ela roda nos horários agendados.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section aria-labelledby="alertas" style="display:flex;flex-direction:column;gap:12px">
+  <h2 id="alertas" class="section-title">Alertas enviados</h2>
+  <div class="panel">
+    {% if alerts %}
+    <ol class="alert-list">
+      {% for a in alerts %}
+      <li>
+        <span class="when">{{ fmt.when(a.sent_at)|capitalize }}</span>
+        <span class="amount">{{ fmt.brl(a.price) }}</span>
+        <span class="why">{{ fmt.range_short(a.offer_key.split('|')[2], a.offer_key.split('|')[3]) }}, {{ a.reason }}</span>
+        <span class="ch">{{ channels_label(a.channels) }}</span>
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="none-yet">Nenhum alerta ainda. Quando um preço passar da regra, ele aparece aqui.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
