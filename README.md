@@ -14,7 +14,7 @@ Robô que monitora preços de passagens no Google Flights com datas flexíveis e
 4. **Alerta**: e-mail (SMTP) e/ou WhatsApp (Evolution API), com link direto para o Google Flights.
 5. **Saúde da coleta**: cada busca fica registrada. Se uma rota passar 2 rodadas seguidas sem preços (bloqueio do Google, mudança na página), chega um aviso pelos mesmos canais, e outro quando voltar a funcionar.
 
-O que ainda falta está em [PENDENCIAS.md](PENDENCIAS.md).
+O que ainda falta está em [PENDENCIAS.md](PENDENCIAS.md). A ideia do projeto, as decisões e o mapa do código estão em [CLAUDE.md](CLAUDE.md).
 
 ## Painel web
 
