@@ -1,0 +1,22 @@
+# Cada item é uma rota monitorada.
+# duration_days: duração da viagem. duration_tolerance: +/- dias aceitos.
+# max_price: teto absoluto (BRL). Alerta dispara se preço <= max_price.
+# drop_pct: alerta se preço cair >= X% abaixo da mediana dos últimos 30 dias.
+# min_samples: nº de amostras da busca fina antes de a regra relativa entrar (fase 2).
+# candidates: quantas datas mais baratas da varredura grossa viram busca fina.
+
+watches:
+  - id: nat-sao-mar-abr-2027
+    origin: NAT
+    destinations: [GRU, CGH, VCP]
+    depart_from: "2027-03-01"
+    depart_to: "2027-04-30"
+    duration_days: 7
+    duration_tolerance: 2
+    adults: 1
+    max_stops: 1
+    max_price: 900
+    drop_pct: 20
+    min_samples: 60
+    candidates: 5
+    currency: BRL

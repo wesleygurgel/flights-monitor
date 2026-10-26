@@ -1,0 +1,7 @@
+fast-flights @ git+https://github.com/jumping2000/google-flights
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+APScheduler>=3.10,<4
+PyYAML>=6.0
+httpx>=0.27
+python-dotenv>=1.0
