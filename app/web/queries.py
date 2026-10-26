@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db import Alert, PriceSnapshot, Route, as_utc, baseline, utcnow
+from ..db import Alert, PriceSnapshot, Route, SearchRun, as_utc, baseline, utcnow
 from . import charts, fmt
 
 BATCH_WINDOW = timedelta(hours=1)  # snapshots dentro de 1h da última leitura = mesma rodada
@@ -60,6 +60,27 @@ def channels_inline(ch: str | None) -> str:
     return channels_label(ch).replace("E-mail", "e-mail").replace("Console", "console")
 
 
+def runs_for(s: Session, watch_id: str, limit: int = 10) -> list[SearchRun]:
+    return list(s.execute(
+        select(SearchRun).where(SearchRun.watch_id == watch_id)
+        .order_by(SearchRun.started_at.desc(), SearchRun.id.desc()).limit(limit)
+    ).scalars())
+
+
+RUN_STATUS = {"running": "Em andamento", "ok": "Sem erro", "partial": "Parte das consultas falhou",
+              "empty": "Nenhum preço encontrado", "failed": "Falhou"}
+RUN_KIND = {"coarse": "Varredura do calendário", "fine": "Busca detalhada"}
+RUN_TRIGGER = {"schedule": "agendada", "manual": "pelo painel", "cli": "pelo terminal"}
+
+
+def short_error(err: str | None) -> str:
+    if not err:
+        return ""
+    if "429" in err:
+        return "o Google bloqueou temporariamente (HTTP 429)"
+    return err.split("\n")[0][:140]
+
+
 @dataclass
 class RouteView:
     route: Route
@@ -74,7 +95,23 @@ class RouteView:
     pct_vs_ref: int | None = None
     spark: dict | None = None
     last_alert: Alert | None = None
+    last_run: SearchRun | None = None
     extra: dict = field(default_factory=dict)
+
+    @property
+    def failing(self) -> bool:
+        return bool(self.route.active and self.last_run and self.last_run.is_bad)
+
+    @property
+    def run_line(self) -> str:
+        r = self.last_run
+        if not r:
+            return "Nenhuma busca ainda"
+        if r.status == "running":
+            return "Buscando agora"
+        if r.is_bad:
+            return f"Busca falhou {fmt.when(r.started_at)}"
+        return f"Última busca {fmt.when(r.started_at)}"
 
     @property
     def is_bargain(self) -> bool:
@@ -126,6 +163,8 @@ def route_view(s: Session, r: Route) -> RouteView:
     v.phase = 2 if (r.drop_pct and v.ref and v.samples >= r.min_samples) else 1
     alerts = alerts_for(s, r.id, 1)
     v.last_alert = alerts[0] if alerts else None
+    runs = runs_for(s, r.id, 1)
+    v.last_run = runs[0] if runs else None
     series = daily_min(s, r.id)
     v.spark = charts.sparkline([p for _, p in series], r.max_price)
 
@@ -214,7 +253,7 @@ def detail(s: Session, r: Route) -> dict:
             break
 
     return {"v": v, "chart": chart, "calendar": cal, "coarse_at": coarse_at,
-            "offers": offers, "alerts": alerts, "n_samples": v.samples}
+            "offers": offers, "alerts": alerts, "n_samples": v.samples, "runs": runs_for(s, r.id, 10)}
 
 
 def next_run(cron: str, tz) -> datetime | None:

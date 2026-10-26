@@ -214,3 +214,13 @@ legend { font-weight: 600; font-size: 18px; padding: 0; margin-bottom: 12px; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
 
 details > summary { cursor: pointer; font-weight: 500; padding: 10px 0; }
+
+/* status das buscas */
+.search-status { display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 10px 16px; border-radius: 6px; background: var(--blue-tint); color: var(--blue-ink); font-weight: 500; max-width: 360px; }
+.spinner { width: 16px; height: 16px; flex: 0 0 16px; border-radius: 50%; border: 2px solid var(--blue-ink); border-right-color: transparent; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-right-color: var(--blue-ink); opacity: 0.6; } }
+table.runs td.wrap { white-space: normal; min-width: 220px; }
+.run-err { display: block; font-size: 13px; color: var(--muted); }
+.notice a { color: inherit; font-weight: 600; }
+.notice p + p { margin-top: 6px !important; }

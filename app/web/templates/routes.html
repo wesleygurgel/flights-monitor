@@ -10,6 +10,15 @@
 </section>
 {% else %}
 
+{% set failing = views|selectattr('failing')|list %}
+{% if failing %}
+<div class="notice bad" role="status">
+  {% for v in failing %}
+  <p style="margin:0">As buscas de <a href="/rotas/{{ v.route.id }}">{{ v.code }}</a> falharam {{ fmt.when(v.last_run.started_at) }}: {{ short_error(v.last_run.error) or 'nenhum preço encontrado' }}. Sem buscas funcionando, essa rota não gera alertas.</p>
+  {% endfor %}
+</div>
+{% endif %}
+
 <section class="hero" aria-labelledby="destaque">
   <div class="hero-text">
     <p class="hero-kicker">{% if hero.kind == 'deal' %}Melhor oportunidade agora{% else %}Situação agora{% endif %}</p>
@@ -69,7 +78,10 @@
     </div>
 
     <div class="end">
-      <div class="label">{{ v.alert_line }}</div>
+      <div>
+        <div class="label {% if v.failing %}is-deal{% endif %}">{{ v.run_line }}</div>
+        <div class="label">{{ v.alert_line }}</div>
+      </div>
       <a href="/rotas/{{ v.route.id }}">Abrir rota</a>
     </div>
   </article>

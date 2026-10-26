@@ -5,6 +5,7 @@ import hmac
 import logging
 import re
 import secrets
+import threading
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -16,15 +17,32 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete
 from starlette.middleware.sessions import SessionMiddleware
 
+from .. import pipeline
+from ..collectors import get_collector
 from ..config import settings
+from ..notifiers import active_notifiers
 from ..db import Alert, PriceSnapshot, Route, SessionLocal, init_db, utcnow
 from . import fmt, queries
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
 
+WEAK_KEYS = {"", "troque-esta-chave", "changeme", "secret"}
+
+
+def secret_problem(password: str | None, key: str | None) -> str | None:
+    """Com senha ligada, a chave assina o cookie de login: fraca = qualquer um forja a sessão."""
+    if password and ((key or "") in WEAK_KEYS or len(key or "") < 32):
+        return ("SECRET_KEY fraca ou padrão. Gere uma com "
+                "python -c \"import secrets; print(secrets.token_hex(32))\" e coloque no .env.")
+    return None
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    problem = secret_problem(settings.app_password, settings.secret_key)
+    if problem:
+        raise RuntimeError(problem)
     init_db()
     if not settings.app_password:
         log.warning("APP_PASSWORD não definido: painel aberto sem senha. Defina no .env antes de expor na internet.")
@@ -34,7 +52,8 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Flights Monitor", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
-templates.env.globals.update(fmt=fmt, channels_label=queries.channels_label)
+templates.env.globals.update(fmt=fmt, channels_label=queries.channels_label, short_error=queries.short_error,
+                             run_status=queries.RUN_STATUS, run_kind=queries.RUN_KIND, run_trigger=queries.RUN_TRIGGER)
 
 OPEN_PATHS = ("/entrar", "/static", "/saude")
 
@@ -103,7 +122,7 @@ def detail_page(request: Request, route_id: str):
         if not r:
             return render(request, "not_found.html", status=404, nav="rotas")
         d = queries.detail(s, r)
-    return render(request, "detail.html", nav="rotas", **d)
+    return render(request, "detail.html", nav="rotas", running=_search_running(route_id), **d)
 
 
 @app.post("/rotas/{route_id}/pausar")
@@ -118,6 +137,54 @@ def toggle_pause(request: Request, route_id: str):
         if request.headers.get("HX-Request") and r:
             return render(request, "_pause_button.html", r=r)
     return RedirectResponse(request.headers.get("referer") or "/", status_code=303)
+
+
+# ---------- buscar agora ----------
+
+_manual: set[str] = set()  # rotas com busca manual disparada neste processo
+_manual_lock = threading.Lock()
+
+
+def _search_running(route_id: str) -> bool:
+    return route_id in _manual or pipeline.is_running(route_id)
+
+
+def _manual_search(watch) -> None:
+    try:
+        pipeline.run_watch(watch, get_collector(settings.collector), active_notifiers(False), trigger="manual")
+    except Exception:
+        log.exception("busca manual de %s falhou", watch.id)
+    finally:
+        with _manual_lock:
+            _manual.discard(watch.id)
+
+
+@app.post("/rotas/{route_id}/buscar")
+def search_now(request: Request, route_id: str):
+    with SessionLocal() as s:
+        r = s.get(Route, route_id)
+    if not r:
+        return RedirectResponse("/", status_code=303)
+    with _manual_lock:
+        if not _search_running(route_id):
+            _manual.add(route_id)
+            threading.Thread(target=_manual_search, args=(r.to_watch(),), daemon=True).start()
+    if request.headers.get("HX-Request"):
+        return render(request, "_search_button.html", r=r, running=True)
+    return RedirectResponse(f"/rotas/{route_id}", status_code=303)
+
+
+@app.get("/rotas/{route_id}/busca")
+def search_status(request: Request, route_id: str):
+    with SessionLocal() as s:
+        r = s.get(Route, route_id)
+    if not r:
+        return Response(status_code=404)
+    if _search_running(route_id):
+        return render(request, "_search_button.html", r=r, running=True)
+    resp = render(request, "_search_button.html", r=r, running=False)
+    resp.headers["HX-Refresh"] = "true"  # terminou: recarrega a página com os novos preços
+    return resp
 
 
 @app.post("/rotas/{route_id}/excluir")
@@ -144,7 +211,7 @@ def _form_defaults(r: Route | None) -> dict:
                 "notify_email": r.notify_email, "notify_whatsapp": r.notify_whatsapp, "active": r.active}
     return {"id": "", "origin": "NAT", "destinations": "", "depart_from": "", "depart_to": "",
             "duration_days": 7, "duration_tolerance": 2, "adults": 1, "max_stops": 1, "max_price": "",
-            "drop_pct": 20, "min_samples": 60, "candidates": 5, "notify_email": True,
+            "drop_pct": 20, "min_samples": 20, "candidates": 5, "notify_email": True,
             "notify_whatsapp": True, "active": True}
 
 

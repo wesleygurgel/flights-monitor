@@ -2,7 +2,7 @@
 # duration_days: duração da viagem. duration_tolerance: +/- dias aceitos.
 # max_price: teto absoluto (BRL). Alerta dispara se preço <= max_price.
 # drop_pct: alerta se preço cair >= X% abaixo da mediana dos últimos 30 dias.
-# min_samples: nº de amostras da busca fina antes de a regra relativa entrar (fase 2).
+# min_samples: nº de buscas finas antes de a regra relativa entrar (fase 2). 20 ≈ 1 semana com 3 buscas/dia.
 # candidates: quantas datas mais baratas da varredura grossa viram busca fina.
 
 watches:
@@ -17,6 +17,6 @@ watches:
     max_stops: 1
     max_price: 900
     drop_pct: 20
-    min_samples: 60
+    min_samples: 20
     candidates: 5
     currency: BRL

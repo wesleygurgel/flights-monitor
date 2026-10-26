@@ -29,7 +29,7 @@ class Watch:
     max_stops: int | None = 1
     max_price: float | None = None
     drop_pct: float | None = None
-    min_samples: int = 60
+    min_samples: int = 20
     candidates: int = 5
     currency: str = "BRL"
     active: bool = True
@@ -57,6 +57,7 @@ class Settings:
 
     app_password: str | None = field(default_factory=lambda: env("APP_PASSWORD"))
     secret_key: str = field(default_factory=lambda: env("SECRET_KEY", "troque-esta-chave"))
+    collector: str = field(default_factory=lambda: env("COLLECTOR", "google_flights"))
 
     def load_yaml_watches(self) -> list[Watch]:
         """Lê o watchlist.yaml. Usado só para popular o banco na primeira execução."""

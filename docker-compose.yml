@@ -35,6 +35,27 @@ services:
       - ./watchlist.yaml:/srv/watchlist.yaml:ro
     restart: unless-stopped
 
+  # Backup diário do Postgres em ./backups, guardando os últimos 14 dias
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: monitor
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          f=/backups/monitor-$$(date +%Y-%m-%d).sql.gz
+          pg_dump -h db -U monitor monitor | gzip > "$$f" && echo "backup ok: $$f"
+          find /backups -name 'monitor-*.sql.gz' -mtime +14 -delete
+          sleep 86400
+        done
+    restart: unless-stopped
+
   # WhatsApp (Evolution API). Remova se for usar só e-mail no começo.
   evolution:
     image: atendai/evolution-api:latest

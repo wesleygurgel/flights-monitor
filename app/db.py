@@ -37,7 +37,7 @@ class Route(Base):
     max_stops: Mapped[int | None] = mapped_column(Integer, nullable=True, default=1)
     max_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     drop_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
-    min_samples: Mapped[int] = mapped_column(Integer, default=60)
+    min_samples: Mapped[int] = mapped_column(Integer, default=20)
     candidates: Mapped[int] = mapped_column(Integer, default=5)
     currency: Mapped[str] = mapped_column(String(3), default="BRL")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -83,6 +83,29 @@ class PriceSnapshot(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
+class SearchRun(Base):
+    """Uma rodada de busca (grossa ou fina) de uma rota: quando, quantas consultas, quantas falharam."""
+
+    __tablename__ = "search_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    watch_id: Mapped[str] = mapped_column(String(64), index=True)
+    kind: Mapped[str] = mapped_column(String(8))  # coarse | fine
+    trigger: Mapped[str] = mapped_column(String(16), default="schedule")  # schedule | manual | cli
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running | ok | partial | empty | failed
+    queries: Mapped[int] = mapped_column(Integer, default=0)
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    results: Mapped[int] = mapped_column(Integer, default=0)
+    best_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def is_bad(self) -> bool:
+        return self.status in ("failed", "empty")
+
+
 class Alert(Base):
     __tablename__ = "alerts"
 
@@ -95,12 +118,35 @@ class Alert(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-engine = create_engine(settings.database_url, future=True)
+_connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+engine = create_engine(settings.database_url, future=True, connect_args=_connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
+def migrate() -> None:
+    """Aplica as migrações do Alembic (alembic upgrade head).
+
+    Bancos criados antes do Alembic (sem a tabela alembic_version) recebem as tabelas que
+    faltam e são marcados na migração inicial, para as próximas seguirem normalmente.
+    """
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import inspect
+
+    from .config import ROOT
+
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    cfg.attributes["configure_logger"] = False
+    tables = inspect(engine).get_table_names()
+    if "routes" in tables and "alembic_version" not in tables:
+        Base.metadata.create_all(engine)
+        command.stamp(cfg, "0001")
+    command.upgrade(cfg, "head")
+
+
 def init_db() -> None:
-    Base.metadata.create_all(engine)
+    migrate()
     seed_routes_from_yaml()
 
 
@@ -129,18 +175,21 @@ def active_watches() -> list[Watch]:
 
 
 def baseline(s: Session, watch_id: str, days: int = 30) -> tuple[float | None, int]:
-    """Mediana dos preços da busca fina nos últimos N dias + nº de amostras.
+    """Preço normal da rota: mediana do menor preço de cada busca fina dos últimos N dias.
 
-    Mediana em vez de média: um único preço absurdo (alto ou baixo) não distorce a referência.
+    Uma amostra por busca (o melhor preço daquela rodada), não todas as ofertas: senão as
+    tarifas caras de outras datas e companhias inflam o "normal" e geram alertas falsos.
+    A busca em andamento não entra (o melhor preço dela só é gravado ao terminar).
+    Mediana em vez de média: um valor absurdo isolado não distorce a referência.
     """
     from datetime import timedelta
 
     since = utcnow() - timedelta(days=days)
     rows = s.execute(
-        select(PriceSnapshot.price)
-        .where(PriceSnapshot.watch_id == watch_id, PriceSnapshot.source == "fine",
-               PriceSnapshot.observed_at >= since)
-        .order_by(PriceSnapshot.price)
+        select(SearchRun.best_price)
+        .where(SearchRun.watch_id == watch_id, SearchRun.kind == "fine",
+               SearchRun.best_price.is_not(None), SearchRun.started_at >= since)
+        .order_by(SearchRun.best_price)
     ).scalars().all()
     n = len(rows)
     if not n:

@@ -1,6 +1,34 @@
 {% extends "base.html" %}
 {% set r = v.route %}
-{% block title %}{{ v.code }} · Flights Monitor{% endblock %}
+{% block title %}{{ v.code }} · Flights Monitor
+<section aria-labelledby="buscas" style="display:flex;flex-direction:column;gap:12px">
+  <h2 id="buscas" class="section-title">Últimas buscas</h2>
+  <div class="panel table-box">
+    {% if runs %}
+    <table class="offers runs">
+      <thead><tr>
+        <th scope="col">Quando</th><th scope="col">Tipo</th><th scope="col">Resultado</th>
+        <th scope="col" class="r">Consultas</th><th scope="col" class="r">Preços</th><th scope="col" class="r">Melhor</th>
+      </tr></thead>
+      <tbody>
+      {% for run in runs %}
+      <tr>
+        <td>{{ fmt.when(run.started_at)|capitalize }}</td>
+        <td>{{ run_kind[run.kind] }}, {{ run_trigger.get(run.trigger, run.trigger) }}</td>
+        <td class="wrap {% if run.is_bad %}is-deal{% endif %}">{{ run_status[run.status] }}{% if run.error %}<span class="run-err">{{ short_error(run.error) }}</span>{% endif %}</td>
+        <td class="r num">{{ run.queries - run.failures }} de {{ run.queries }}</td>
+        <td class="r num">{{ fmt.num(run.results) }}</td>
+        <td class="r num">{{ fmt.brl(run.best_price) if run.best_price else '—' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="none-yet">Nenhuma busca registrada ainda.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
 {% block main %}
 <a href="/" class="back">Voltar para rotas</a>
 
@@ -10,10 +38,15 @@
     <p>{{ fmt.city(r.origin) }} para {{ v.dests }}. {{ v.window }}, {{ r.adults }} adulto{% if r.adults > 1 %}s{% endif %}{% if r.max_stops == 0 %}, só voo direto{% elif r.max_stops is not none %}, até {{ r.max_stops }} escala{% if r.max_stops > 1 %}s{% endif %}{% endif %}.</p>
   </div>
   <div class="detail-actions">
+    {% include "_search_button.html" %}
     <a href="/gerenciar/{{ r.id }}" class="btn btn-line">Editar rota</a>
     {% include "_pause_button.html" %}
   </div>
 </section>
+
+{% if v.failing %}
+<p class="notice bad" role="status" style="margin:0">A última busca falhou {{ fmt.when(v.last_run.started_at) }}: {{ short_error(v.last_run.error) or 'nenhum preço encontrado' }}. Enquanto as buscas falharem, esta rota não gera alertas.</p>
+{% endif %}
 
 <section class="panel kpis" aria-label="Números da rota">
   <div>
@@ -24,7 +57,7 @@
   <div>
     <div class="kpi-label">Preço normal da rota</div>
     <div class="kpi-value">{{ fmt.brl(v.ref) }}</div>
-    <div class="kpi-sub">{% if v.ref %}Mediana de {{ fmt.num(v.samples) }} preço{% if v.samples != 1 %}s{% endif %} em 30 dias{% else %}Sem buscas ainda{% endif %}</div>
+    <div class="kpi-sub">{% if v.ref %}Mediana do melhor preço de {{ fmt.num(v.samples) }} busca{% if v.samples != 1 %}s{% endif %}{% else %}Sem buscas ainda{% endif %}</div>
   </div>
   <div>
     <div class="kpi-label">Teto que você definiu</div>
@@ -155,6 +188,34 @@
     </ol>
     {% else %}
     <p class="none-yet">Nenhum alerta ainda. Quando um preço passar da regra, ele aparece aqui.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section aria-labelledby="buscas" style="display:flex;flex-direction:column;gap:12px">
+  <h2 id="buscas" class="section-title">Últimas buscas</h2>
+  <div class="panel table-box">
+    {% if runs %}
+    <table class="offers runs">
+      <thead><tr>
+        <th scope="col">Quando</th><th scope="col">Tipo</th><th scope="col">Resultado</th>
+        <th scope="col" class="r">Consultas</th><th scope="col" class="r">Preços</th><th scope="col" class="r">Melhor</th>
+      </tr></thead>
+      <tbody>
+      {% for run in runs %}
+      <tr>
+        <td>{{ fmt.when(run.started_at)|capitalize }}</td>
+        <td>{{ run_kind[run.kind] }}, {{ run_trigger.get(run.trigger, run.trigger) }}</td>
+        <td class="wrap {% if run.is_bad %}is-deal{% endif %}">{{ run_status[run.status] }}{% if run.error %}<span class="run-err">{{ short_error(run.error) }}</span>{% endif %}</td>
+        <td class="r num">{{ run.queries - run.failures }} de {{ run.queries }}</td>
+        <td class="r num">{{ fmt.num(run.results) }}</td>
+        <td class="r num">{{ fmt.brl(run.best_price) if run.best_price else '—' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="none-yet">Nenhuma busca registrada ainda.</p>
     {% endif %}
   </div>
 </section>

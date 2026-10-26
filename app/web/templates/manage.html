@@ -90,7 +90,7 @@
           <div class="affix"><input id="drop_pct" name="drop_pct" value="{{ f.drop_pct }}" inputmode="numeric" placeholder="20"><span class="muted">%</span></div>
           {% if errors.drop_pct %}<span class="err">{{ errors.drop_pct }}</span>{% else %}<span class="hint">Deixe vazio para usar só o teto</span>{% endif %}
         </div>
-        {{ field('min_samples', 'Buscas antes de usar o normal', type='number', hint='60 dá cerca de 4 dias de coleta', attrs='min="1" inputmode="numeric"') }}
+        {{ field('min_samples', 'Buscas antes de usar o normal', type='number', hint='20 dá cerca de 1 semana com 3 buscas por dia', attrs='min="1" inputmode="numeric"') }}
       </div>
     </fieldset>
 

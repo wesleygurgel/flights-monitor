@@ -11,7 +11,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import delete
 
-from .db import Alert, PriceSnapshot, Route, SessionLocal, init_db, utcnow
+from .db import Alert, PriceSnapshot, Route, SearchRun, SessionLocal, init_db, utcnow
 
 AIRLINES = ["LATAM", "GOL", "Azul"]
 
@@ -19,11 +19,19 @@ AIRLINES = ["LATAM", "GOL", "Azul"]
 def _route(s, **kw) -> Route:
     s.execute(delete(PriceSnapshot).where(PriceSnapshot.watch_id == kw["id"]))
     s.execute(delete(Alert).where(Alert.watch_id == kw["id"]))
+    s.execute(delete(SearchRun).where(SearchRun.watch_id == kw["id"]))
     r = s.get(Route, kw["id"]) or Route(id=kw["id"])
     for k, v in kw.items():
         setattr(r, k, v)
     s.add(r)
     return r
+
+
+def _run(s, watch_id: str, at, best: float | None, kind: str = "fine", status: str = "ok",
+         queries: int = 5, error: str | None = None) -> None:
+    s.add(SearchRun(watch_id=watch_id, kind=kind, trigger="schedule", status=status, queries=queries,
+                    failures=queries if status == "failed" else 0, results=0 if status == "failed" else queries * 3,
+                    best_price=best, error=error, started_at=at, finished_at=at + timedelta(minutes=2)))
 
 
 def _fine_history(s, r: Route, trend_from: float, trend_to: float, days: int, runs_per_day: int,
@@ -35,6 +43,9 @@ def _fine_history(s, r: Route, trend_from: float, trend_to: float, days: int, ru
             if at > now:
                 continue
             base = trend_to + (trend_from - trend_to) * (d / days) + rng.uniform(-45, 45)
+            _run(s, r.id, at, trend_to if d == 0 else round(base, 2), queries=r.candidates)
+            if run == 0:
+                _run(s, r.id, at - timedelta(hours=2), None, kind="coarse", queries=15)
             for c in range(r.candidates):
                 out = date.fromisoformat(r.depart_from) + timedelta(days=rng.randrange(0, 55))
                 ret = out + timedelta(days=r.duration_days)
@@ -77,16 +88,16 @@ def run() -> None:
     with SessionLocal() as s:
         sao = _route(s, id="nat-sao-mar-abr-2027", origin="NAT", destinations="GRU,CGH,VCP",
                      depart_from="2027-03-01", depart_to="2027-04-30", duration_days=7, duration_tolerance=2,
-                     adults=1, max_stops=1, max_price=900, drop_pct=20, min_samples=60, candidates=5,
+                     adults=1, max_stops=1, max_price=900, drop_pct=20, min_samples=20, candidates=5,
                      currency="BRL", active=True, notify_email=True, notify_whatsapp=True, paused_at=None,
                      created_at=utcnow() - timedelta(days=31))
         lis = _route(s, id="nat-lis-demo", origin="NAT", destinations="LIS", depart_from="2027-05-01",
                      depart_to="2027-06-15", duration_days=14, duration_tolerance=3, adults=1, max_stops=1,
-                     max_price=3800, drop_pct=20, min_samples=60, candidates=4, currency="BRL", active=True,
+                     max_price=3800, drop_pct=20, min_samples=20, candidates=4, currency="BRL", active=True,
                      notify_email=True, notify_whatsapp=False, paused_at=None, created_at=utcnow() - timedelta(days=2))
         poa = _route(s, id="nat-poa-demo", origin="NAT", destinations="POA", depart_from="2027-07-01",
                      depart_to="2027-07-31", duration_days=5, duration_tolerance=1, adults=1, max_stops=1,
-                     max_price=1100, drop_pct=20, min_samples=60, candidates=3, currency="BRL", active=False,
+                     max_price=1100, drop_pct=20, min_samples=20, candidates=3, currency="BRL", active=False,
                      notify_email=True, notify_whatsapp=True, paused_at=utcnow() - timedelta(days=6),
                      created_at=utcnow() - timedelta(days=20))
         s.flush()
@@ -104,8 +115,11 @@ def run() -> None:
                     channels="email,whatsapp", sent_at=now - timedelta(hours=6)))
 
         # Lisboa: 2 dias de coleta, ainda formando o preço normal (24 buscas)
-        for i in range(6):
+        _run(s, lis.id, now - timedelta(minutes=20), None, status="failed", queries=4,
+             error="RuntimeError: Google Flights returned HTTP 429. The request may have been blocked or rate-limited.")
+        for i in range(1, 7):
             at = now - timedelta(hours=i * 8)
+            _run(s, lis.id, at, 4390 + i * 55, queries=4)
             for c in range(4):
                 out = date(2027, 5, 12) + timedelta(days=c * 3)
                 s.add(PriceSnapshot(watch_id=lis.id, source="fine", origin="NAT", destination="LIS",
@@ -116,6 +130,7 @@ def run() -> None:
         # Porto Alegre: pausada, poucas buscas antigas
         for i in range(5):
             at = now - timedelta(days=10 - i)
+            _run(s, poa.id, at, 1610 - i * 20, queries=3)
             s.add(PriceSnapshot(watch_id=poa.id, source="fine", origin="NAT", destination="POA",
                                 outbound_date="2027-07-10", return_date="2027-07-15", price=1610 - i * 20,
                                 currency="BRL", airlines="GOL", stops=1,

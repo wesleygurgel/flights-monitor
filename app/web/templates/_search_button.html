@@ -1,0 +1,10 @@
+{% if running %}
+<div class="search-status" hx-get="/rotas/{{ r.id }}/busca" hx-trigger="every 3s" hx-swap="outerHTML" role="status">
+  <span class="spinner" aria-hidden="true"></span>
+  Buscando preços. Pode levar alguns minutos, a página atualiza sozinha.
+</div>
+{% else %}
+<form method="post" action="/rotas/{{ r.id }}/buscar" hx-post="/rotas/{{ r.id }}/buscar" hx-swap="outerHTML" style="display:contents">
+  <button type="submit" class="btn btn-main">Buscar agora</button>
+</form>
+{% endif %}

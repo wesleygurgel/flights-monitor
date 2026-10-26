@@ -29,6 +29,26 @@ def format_message(watch: Watch, destination: str, o: Offer, reasons: list[str])
     return subject, body
 
 
+def format_health_message(watch: Watch, event: str, run) -> tuple[str, str]:
+    """Aviso de coleta quebrada ("down") ou recuperada ("up")."""
+    from .web.fmt import route_code, when
+
+    code = route_code(watch.origin, watch.destinations)
+    if event == "down":
+        subject = f"Buscas de {code} pararam de trazer preços"
+        why = run.error or "o Google não devolveu nenhum resultado"
+        body = (
+            f"*As últimas buscas de {code} não trouxeram preços.*\n"
+            f"Última tentativa: {when(run.started_at)}. Motivo: {why}.\n\n"
+            "Enquanto isso, nenhum alerta de preço sai para essa rota. Se o motivo for HTTP 429, "
+            "o Google bloqueou o IP temporariamente: aumente REQUEST_DELAY ou reduza as datas checadas."
+        )
+    else:
+        subject = f"Buscas de {code} voltaram a funcionar"
+        body = f"*As buscas de {code} voltaram a trazer preços* ({when(run.started_at)}). Os alertas seguem normalmente."
+    return subject, body
+
+
 class EmailNotifier:
     name = "email"
 

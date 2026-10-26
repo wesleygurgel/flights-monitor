@@ -4,3 +4,4 @@
 __pycache__/
 demo.db
 .pytest_cache/
+backups/
