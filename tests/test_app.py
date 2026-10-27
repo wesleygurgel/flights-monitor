@@ -1,29 +1,11 @@
 import pytest
-from fastapi.testclient import TestClient
 
-from app import demo
 from app.collectors import Offer
 from app.config import Watch
-from app.db import Route, SessionLocal, init_db
+from app.db import Route, SessionLocal
 from app.rules import evaluate
-from app.web.app import app
 
 SAO = "nat-sao-mar-abr-2027"
-
-
-@pytest.fixture(scope="module")
-def client():
-    init_db()
-    demo.run()
-    with TestClient(app) as c:
-        yield c
-
-
-@pytest.fixture
-def logged(client):
-    client.post("/entrar", data={"senha": "segredo"})
-    yield client
-    client.post("/sair")
 
 
 def test_pede_login(client):
@@ -88,7 +70,7 @@ def test_rota_invalida_mostra_erros(logged):
     })
     assert r.status_code == 400
     assert "Corrija os campos marcados" in r.text
-    assert "código de 3 letras" in r.text
+    assert "Escolha o aeroporto na lista" in r.text
 
 
 def test_regra_fase_1_so_teto():

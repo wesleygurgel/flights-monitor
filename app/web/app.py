@@ -11,13 +11,13 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete
 from starlette.middleware.sessions import SessionMiddleware
 
-from .. import pipeline
+from .. import airports, pipeline
 from ..collectors import get_collector
 from ..config import local_today, settings
 from ..notifiers import active_notifiers
@@ -52,7 +52,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Flights Monitor", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
-templates.env.globals.update(fmt=fmt, channels_label=queries.channels_label, short_error=queries.short_error,
+templates.env.globals.update(fmt=fmt, airport=airports.get, channels_label=queries.channels_label, short_error=queries.short_error,
                              run_status=queries.RUN_STATUS, run_kind=queries.RUN_KIND, run_trigger=queries.RUN_TRIGGER)
 
 OPEN_PATHS = ("/entrar", "/static", "/saude")
@@ -316,7 +316,7 @@ def delete_route(route_id: str):
 
 def _form_defaults(r: Route | None) -> dict:
     if r:
-        return {"id": r.id, "origin": r.origin, "destinations": ", ".join(r.dest_list),
+        return {"id": r.id, "origin": r.origin, "destinations": ",".join(r.dest_list),
                 "depart_from": r.depart_from, "depart_to": r.depart_to, "duration_days": r.duration_days,
                 "duration_tolerance": r.duration_tolerance, "adults": r.adults,
                 "max_stops": "" if r.max_stops is None else r.max_stops,
@@ -337,6 +337,12 @@ def _manage(request: Request, selected: Route | None, form: dict, errors: dict |
     return render(request, "manage.html", status=status, nav="gerenciar", routes=routes, selected=selected,
                   f=form, errors=errors or {}, saved=saved,
                   title=f"Editar {fmt.route_code(selected.origin, selected.dest_list)}" if selected else "Nova rota")
+
+
+@app.get("/aeroportos")
+def airport_search(q: str = "", grupos: int = 1):
+    """Sugestões do campo de aeroporto: ?q=guarulhos. grupos=0 tira "todos os aeroportos" (origem)."""
+    return JSONResponse(airports.search(q, groups=bool(grupos)))
 
 
 @app.get("/gerenciar", response_class=HTMLResponse)
@@ -362,7 +368,6 @@ def manage_edit(request: Request, route_id: str, salvo: int = 0):
     return _manage(request, r, _form_defaults(r), saved=bool(salvo))
 
 
-IATA = re.compile(r"^[A-Z]{3}$")
 THOUSANDS = re.compile(r"^\d{1,3}(\.\d{3})+$")
 # mudar qualquer um destes muda o preço: o histórico anterior deixa de servir de preço normal
 PRICE_FIELDS = ("origin", "destinations", "depart_from", "depart_to", "duration_days", "duration_tolerance",
@@ -401,11 +406,13 @@ async def manage_save(request: Request):
     errors: dict[str, str] = {}
 
     origin = str(f["origin"]).strip().upper()
-    if not IATA.match(origin):
-        errors["origin"] = "Informe o código de 3 letras do aeroporto, como NAT."
-    dests = [d.strip().upper() for d in re.split(r"[,\s]+", str(f["destinations"])) if d.strip()]
-    if not dests or not all(IATA.match(d) for d in dests):
-        errors["destinations"] = "Informe um ou mais códigos de 3 letras separados por vírgula, como GRU, CGH."
+    if not airports.get(origin):
+        errors["origin"] = "Escolha o aeroporto na lista."
+    dests = list(dict.fromkeys(d.upper() for d in re.split(r"[,\s]+", str(f["destinations"])) if d))
+    if not dests or not all(airports.get(d) for d in dests):
+        errors["destinations"] = "Escolha o aeroporto na lista."
+    elif origin in dests:
+        errors["destinations"] = "O destino precisa ser diferente da origem."
     with SessionLocal() as s:
         existing = s.get(Route, str(f["id"])) if f["id"] else None
     try:

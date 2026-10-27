@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from .. import airports
 from ..config import settings
 
 TZ = ZoneInfo(settings.tz)
@@ -12,25 +13,8 @@ MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
          "agosto", "setembro", "outubro", "novembro", "dezembro"]
 MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
 
-# código -> (cidade, nome do aeroporto)
-AIRPORTS: dict[str, tuple[str, str]] = {
-    "NAT": ("Natal", "Natal"),
-    "GRU": ("São Paulo", "Guarulhos"), "CGH": ("São Paulo", "Congonhas"), "VCP": ("São Paulo", "Viracopos"),
-    "GIG": ("Rio de Janeiro", "Galeão"), "SDU": ("Rio de Janeiro", "Santos Dumont"),
-    "BSB": ("Brasília", "Brasília"), "CNF": ("Belo Horizonte", "Confins"), "PLU": ("Belo Horizonte", "Pampulha"),
-    "REC": ("Recife", "Recife"), "FOR": ("Fortaleza", "Fortaleza"), "SSA": ("Salvador", "Salvador"),
-    "JPA": ("João Pessoa", "João Pessoa"), "MCZ": ("Maceió", "Maceió"), "AJU": ("Aracaju", "Aracaju"),
-    "POA": ("Porto Alegre", "Salgado Filho"), "CWB": ("Curitiba", "Afonso Pena"), "FLN": ("Florianópolis", "Hercílio Luz"),
-    "BEL": ("Belém", "Belém"), "MAO": ("Manaus", "Manaus"), "GYN": ("Goiânia", "Goiânia"),
-    "CXJ": ("Caxias do Sul", "Caxias do Sul"), "FEN": ("Fernando de Noronha", "Noronha"),
-    "LIS": ("Lisboa", "Lisboa"), "OPO": ("Porto", "Porto"), "MAD": ("Madri", "Barajas"),
-    "CDG": ("Paris", "Charles de Gaulle"), "MIA": ("Miami", "Miami"), "MCO": ("Orlando", "Orlando"),
-    "JFK": ("Nova York", "JFK"), "EZE": ("Buenos Aires", "Ezeiza"), "AEP": ("Buenos Aires", "Aeroparque"),
-    "SCL": ("Santiago", "Santiago"), "MVD": ("Montevidéu", "Carrasco"), "LIM": ("Lima", "Lima"),
-}
-
 # conjuntos de aeroportos de uma mesma cidade -> código da cidade (IATA metropolitano)
-METROS = {"SAO": {"GRU", "CGH", "VCP"}, "RIO": {"GIG", "SDU"}, "BHZ": {"CNF", "PLU"}, "BUE": {"EZE", "AEP"}}
+METROS = {metro: set(members) for metro, (_, members) in airports.METROS.items()}
 
 
 def brl(v: float | None) -> str:
@@ -82,11 +66,13 @@ def when(dt: datetime) -> str:
 
 
 def city(code: str) -> str:
-    return AIRPORTS.get(code, (code, code))[0]
+    a = airports.get(code)
+    return a.city if a else code
 
 
 def airport(code: str) -> str:
-    return AIRPORTS.get(code, (code, code))[1]
+    a = airports.get(code)
+    return a.name if a else code
 
 
 def route_code(origin: str, dests: list[str]) -> str:

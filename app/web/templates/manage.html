@@ -7,6 +7,30 @@
   {% if errors[name] %}<span class="err" id="{{ name }}-err">{{ errors[name] }}</span>{% elif hint %}<span class="hint">{{ hint }}</span>{% endif %}
 </div>
 {%- endmacro %}
+{% macro airport_field(name, label, hint, many=False) -%}
+{% set codes = (f[name] or '')|string %}
+{% set codes = codes.replace(' ', '').split(',')|reject('equalto', '')|list %}
+<div class="field airport-field {% if errors[name] %}has-err{% endif %}" data-airport="{{ 'many' if many else 'one' }}">
+  <label for="{{ name }}-q">{{ label }}</label>
+  <input type="hidden" name="{{ name }}" value="{{ codes|join(',') }}">
+  {% if many %}
+  <ul class="chips" aria-label="Destinos escolhidos">
+    {% for c in codes %}{% set a = airport(c) %}
+    <li data-code="{{ c }}">{{ a.text if a else c }}<button type="button" aria-label="Remover {{ a.text if a else c }}">×</button></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <div class="combo">
+    {% set a = airport(codes[0]) if codes and not many else none %}
+    <input id="{{ name }}-q" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false"
+           aria-controls="{{ name }}-list" autocomplete="off" spellcheck="false" placeholder="Cidade ou aeroporto"
+           value="{{ a.text if a else ('' if many else codes|join(',')) }}"
+           aria-describedby="{{ name }}-{{ 'err' if errors[name] else 'hint' }}"{% if errors[name] %} aria-invalid="true"{% endif %}>
+    <ul id="{{ name }}-list" role="listbox" class="combo-list" aria-label="Sugestões" hidden></ul>
+  </div>
+  {% if errors[name] %}<span class="err" id="{{ name }}-err">{{ errors[name] }}</span>{% else %}<span class="hint" id="{{ name }}-hint">{{ hint }}</span>{% endif %}
+</div>
+{%- endmacro %}
 {% block main %}
 <div class="manage">
   <aside aria-labelledby="lista">
@@ -42,8 +66,8 @@
     <fieldset>
       <legend>Para onde</legend>
       <div class="grid">
-        {{ field('origin', 'Saindo de', hint='Código do aeroporto, como NAT', attrs='maxlength="3" autocapitalize="characters" autocomplete="off"') }}
-        {{ field('destinations', 'Chegando em', hint='Um ou mais, separados por vírgula: GRU, CGH, VCP', attrs='autocapitalize="characters" autocomplete="off"') }}
+        {{ airport_field('origin', 'Saindo de', 'Digite a cidade ou o aeroporto, como Natal') }}
+        {{ airport_field('destinations', 'Chegando em', 'Um ou mais. Ex.: São Paulo, Guarulhos, Lima', many=True) }}
       </div>
     </fieldset>
 
@@ -119,4 +143,5 @@
     </div>
   </form>
 </div>
+<script src="/static/airports.js" defer></script>
 {% endblock %}

@@ -79,8 +79,9 @@ painel web (FastAPI) lê o mesmo banco
 | `app/web/app.py` | Rotas HTTP do painel, login, "Buscar agora" (thread em background) |
 | `app/web/queries.py` | Monta os dados de cada tela (`route_view`, `hero`, `detail`) |
 | `app/web/charts.py` | Gráficos SVG calculados no servidor (sparkline, histórico 30 dias, calendário de preços) |
-| `app/web/fmt.py` | Formatação pt-BR (R$, datas), nomes de aeroportos e códigos de cidade (SAO, RIO…) |
-| `app/web/templates/`, `app/web/static/app.css` | Jinja2 + HTMX; CSS com os tokens do design |
+| `app/airports.py` | Base de aeroportos (`app/data/airports.csv`, cerca de 4 mil com voo regular), busca do formulário (`search()`, sem acento, Brasil primeiro) e cidades com vários aeroportos (`METROS`). Atualizar a base: `python scripts/build_airports.py` (fonte OurAirports; nomes curtos e cidades em português ficam no script) |
+| `app/web/fmt.py` | Formatação pt-BR (R$, datas), nomes de aeroportos (lidos de `app/airports.py`) e códigos de cidade (SAO, RIO…) |
+| `app/web/templates/`, `app/web/static/app.css` | Jinja2 + HTMX; CSS com os tokens do design. `static/airports.js`: campo de aeroporto com sugestões (`GET /aeroportos?q=`) |
 | `migrations/` | Alembic; rodado sozinho ao iniciar |
 | `tests/` | Pytest; `conftest.py` define SQLite temporário e `COLLECTOR=mock` (que também troca os feeds por fontes simuladas) |
 
