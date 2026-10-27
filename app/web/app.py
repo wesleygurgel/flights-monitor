@@ -19,9 +19,9 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .. import pipeline
 from ..collectors import get_collector
-from ..config import settings
+from ..config import local_today, settings
 from ..notifiers import active_notifiers
-from ..db import Alert, PriceSnapshot, Route, SessionLocal, init_db, utcnow
+from ..db import Alert, PriceSnapshot, Route, SearchRun, SessionLocal, init_db, utcnow
 from . import fmt, queries
 
 log = logging.getLogger(__name__)
@@ -150,8 +150,11 @@ def _search_running(route_id: str) -> bool:
 
 
 def _manual_search(watch) -> None:
+    # varredura recente é reaproveitada: o botão busca os voos de novo sem repetir as ~15 consultas do calendário
+    coarse = not pipeline.recent_run(watch.id, "coarse", since=watch.prices_since)
     try:
-        pipeline.run_watch(watch, get_collector(settings.collector), active_notifiers(False), trigger="manual")
+        pipeline.run_watch(watch, get_collector(settings.collector), active_notifiers(False), trigger="manual",
+                           coarse=coarse)
     except Exception:
         log.exception("busca manual de %s falhou", watch.id)
     finally:
@@ -303,6 +306,7 @@ def delete_route(route_id: str):
     with SessionLocal() as s:
         s.execute(delete(PriceSnapshot).where(PriceSnapshot.watch_id == route_id))
         s.execute(delete(Alert).where(Alert.watch_id == route_id))
+        s.execute(delete(SearchRun).where(SearchRun.watch_id == route_id))
         s.execute(delete(Route).where(Route.id == route_id))
         s.commit()
     return RedirectResponse("/gerenciar", status_code=303)
@@ -359,6 +363,19 @@ def manage_edit(request: Request, route_id: str, salvo: int = 0):
 
 
 IATA = re.compile(r"^[A-Z]{3}$")
+THOUSANDS = re.compile(r"^\d{1,3}(\.\d{3})+$")
+# mudar qualquer um destes muda o preço: o histórico anterior deixa de servir de preço normal
+PRICE_FIELDS = ("origin", "destinations", "depart_from", "depart_to", "duration_days", "duration_tolerance",
+                "adults", "max_stops")
+
+
+def _number(v: str) -> float:
+    """Número digitado em pt-BR ou não: "1.200" e "1.200,50" (milhar), "20,5" e "20.5" (decimal)."""
+    if "," in v:
+        return float(v.replace(".", "").replace(",", "."))
+    if THOUSANDS.match(v):
+        return float(v.replace(".", ""))
+    return float(v)
 
 
 def _int(v: str, name: str, errors: dict, lo: int = 0, hi: int = 10_000, optional: bool = False) -> int | None:
@@ -366,7 +383,7 @@ def _int(v: str, name: str, errors: dict, lo: int = 0, hi: int = 10_000, optiona
     if not v and optional:
         return None
     try:
-        n = int(float(v.replace(".", "").replace(",", ".")))
+        n = int(_number(v))
         if not lo <= n <= hi:
             raise ValueError
         return n
@@ -389,12 +406,17 @@ async def manage_save(request: Request):
     dests = [d.strip().upper() for d in re.split(r"[,\s]+", str(f["destinations"])) if d.strip()]
     if not dests or not all(IATA.match(d) for d in dests):
         errors["destinations"] = "Informe um ou mais códigos de 3 letras separados por vírgula, como GRU, CGH."
+    with SessionLocal() as s:
+        existing = s.get(Route, str(f["id"])) if f["id"] else None
     try:
         d_from, d_to = date.fromisoformat(str(f["depart_from"])), date.fromisoformat(str(f["depart_to"]))
         if d_to < d_from:
             errors["depart_to"] = "A data final precisa ser igual ou depois da inicial."
-        elif d_to < date.today():
+        elif d_to < local_today():
             errors["depart_to"] = "O período já passou. Escolha datas futuras."
+        elif d_from < local_today() and (existing is None or existing.depart_from != d_from.isoformat()):
+            # rota em andamento pode manter o início que já passou; data nova no passado é engano
+            errors["depart_from"] = "Essa data já passou. Escolha de hoje em diante."
     except ValueError:
         errors["depart_from"] = "Escolha as duas datas do período de ida."
     days = _int(f["duration_days"], "duration_days", errors, 1, 60)
@@ -414,6 +436,7 @@ async def manage_save(request: Request):
         r = s.get(Route, str(f["id"])) if f["id"] else None
         if errors:
             return _manage(request, r, f, errors, status=400)
+        before = {k: getattr(r, k) for k in PRICE_FIELDS} if r else None
         if r is None:
             r = Route(id=f"{origin}-{dests[0]}-{secrets.token_hex(3)}".lower())
             s.add(r)
@@ -423,6 +446,8 @@ async def manage_save(request: Request):
         r.max_stops, r.max_price, r.drop_pct = max_stops, max_price, drop
         r.min_samples, r.candidates = samples, cands
         r.notify_email, r.notify_whatsapp = f["notify_email"], f["notify_whatsapp"]
+        if before and before != {k: getattr(r, k) for k in PRICE_FIELDS}:
+            r.prices_since = utcnow()  # recomeça a formar o preço normal (volta à fase 1)
         s.commit()
         rid = r.id
     return RedirectResponse(f"/gerenciar/{rid}?salvo=1", status_code=303)

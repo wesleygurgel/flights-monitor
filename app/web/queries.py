@@ -13,28 +13,34 @@ from . import charts, fmt
 BATCH_WINDOW = timedelta(hours=1)  # snapshots dentro de 1h da última leitura = mesma rodada
 
 
-def latest_batch(s: Session, watch_id: str, source: str) -> list[PriceSnapshot]:
+def _since(days: int | None, since: datetime | None) -> datetime | None:
+    """O mais recente entre "N dias atrás" e a última mudança de parâmetros da rota."""
+    start = utcnow() - timedelta(days=days) if days else None
+    if since and (start is None or as_utc(since) > start):
+        start = as_utc(since)
+    return start
+
+
+def latest_batch(s: Session, watch_id: str, source: str, since: datetime | None = None) -> list[PriceSnapshot]:
+    base = [PriceSnapshot.watch_id == watch_id, PriceSnapshot.source == source]
+    if since:
+        base.append(PriceSnapshot.observed_at >= as_utc(since))
     latest = s.execute(
-        select(PriceSnapshot.observed_at)
-        .where(PriceSnapshot.watch_id == watch_id, PriceSnapshot.source == source)
-        .order_by(PriceSnapshot.observed_at.desc()).limit(1)
+        select(PriceSnapshot.observed_at).where(*base).order_by(PriceSnapshot.observed_at.desc()).limit(1)
     ).scalar_one_or_none()
     if latest is None:
         return []
     return list(s.execute(
-        select(PriceSnapshot).where(
-            PriceSnapshot.watch_id == watch_id, PriceSnapshot.source == source,
-            PriceSnapshot.observed_at >= latest - BATCH_WINDOW,
-        ).order_by(PriceSnapshot.price)
+        select(PriceSnapshot).where(*base, PriceSnapshot.observed_at >= latest - BATCH_WINDOW)
+        .order_by(PriceSnapshot.price)
     ).scalars())
 
 
-def daily_min(s: Session, watch_id: str, days: int = 30) -> list[tuple[date, float]]:
-    since = utcnow() - timedelta(days=days)
+def daily_min(s: Session, watch_id: str, days: int = 30, since: datetime | None = None) -> list[tuple[date, float]]:
     rows = s.execute(
         select(PriceSnapshot.observed_at, PriceSnapshot.price)
         .where(PriceSnapshot.watch_id == watch_id, PriceSnapshot.source == "fine",
-               PriceSnapshot.observed_at >= since)
+               PriceSnapshot.observed_at >= _since(days, since))
     ).all()
     best: dict[date, float] = {}
     for at, price in rows:
@@ -113,6 +119,12 @@ class RouteView:
             return f"Busca falhou {fmt.when(r.started_at)}"
         return f"Última busca {fmt.when(r.started_at)}"
 
+    def vs_ref(self, price: float) -> int | None:
+        """% em relação ao preço normal; só na fase 2, quando o normal já é confiável."""
+        if self.phase != 2 or not self.ref:
+            return None
+        return round((price / self.ref - 1) * 100)
+
     @property
     def is_bargain(self) -> bool:
         return self.status in ("below_ref", "below_cap")
@@ -157,15 +169,15 @@ def route_view(s: Session, r: Route) -> RouteView:
         route=r, code=fmt.route_code(r.origin, r.dest_list), dests=fmt.dest_airports(r.dest_list),
         window=fmt.window(r.depart_from, r.depart_to, r.duration_days, r.duration_tolerance),
     )
-    batch = latest_batch(s, r.id, "fine")
+    batch = latest_batch(s, r.id, "fine", since=r.prices_since)
     v.best = batch[0] if batch else None
-    v.ref, v.samples = baseline(s, r.id, 30)
+    v.ref, v.samples = baseline(s, r.id, 30, since=r.prices_since)
     v.phase = 2 if (r.drop_pct and v.ref and v.samples >= r.min_samples) else 1
     alerts = alerts_for(s, r.id, 1)
     v.last_alert = alerts[0] if alerts else None
     runs = runs_for(s, r.id, 1)
     v.last_run = runs[0] if runs else None
-    series = daily_min(s, r.id)
+    series = daily_min(s, r.id, since=r.prices_since)
     v.spark = charts.sparkline([p for _, p in series], r.max_price)
 
     price = v.best.price if v.best else None
@@ -188,18 +200,20 @@ def all_routes(s: Session) -> list[Route]:
     return list(s.execute(select(Route).order_by(Route.active.desc(), Route.created_at)).scalars())
 
 
+def deal_score(v) -> float:
+    """Quanto menor, melhor: fração do preço normal (fase 2) ou do teto (fase 1)."""
+    if v.phase == 2 and v.ref:
+        return v.best.price / v.ref
+    return v.best.price / (v.route.max_price or v.best.price)
+
+
 def hero(views: list[RouteView]) -> dict:
     """A frase de abertura da tela de rotas: a melhor oportunidade agora, ou o que falta."""
     if not views:
         return {"kind": "empty"}
     deals = [v for v in views if v.is_bargain]
     if deals:
-        # maior desconto relativo primeiro; sem referência, maior folga sob o teto
-        def score(v: RouteView) -> float:
-            if v.ref:
-                return v.best.price / v.ref
-            return v.best.price / (v.route.max_price or v.best.price)
-        v = min(deals, key=score)
+        v = min(deals, key=deal_score)  # maior desconto relativo primeiro
         b = v.best
         dest = fmt.dest_city([b.destination])
         title = f"{fmt.city(v.route.origin)} para {dest} por {fmt.brl(b.price)}"
@@ -226,13 +240,13 @@ def hero(views: list[RouteView]) -> dict:
 
 def detail(s: Session, r: Route) -> dict:
     v = route_view(s, r)
-    series = daily_min(s, r.id)
+    series = daily_min(s, r.id, since=r.prices_since)
     alerts = alerts_for(s, r.id)
     alert_pts = [(fmt.local(a.sent_at).date(), a.price) for a in alerts]
     chart = charts.history_chart(series, v.ref if v.phase == 2 else None, r.max_price, alert_pts)
 
     # calendário: última varredura grossa, duração alvo, menor preço por data de ida
-    coarse = [c for c in latest_batch(s, r.id, "coarse")
+    coarse = [c for c in latest_batch(s, r.id, "coarse", since=r.prices_since)
               if (date.fromisoformat(c.return_date) - date.fromisoformat(c.outbound_date)).days == r.duration_days]
     by_day: dict[date, float] = {}
     for c in coarse:
@@ -243,7 +257,7 @@ def detail(s: Session, r: Route) -> dict:
 
     # melhores voos: última busca fina, sem repetir mesma combinação data/destino/cia
     seen, offers = set(), []
-    for o in latest_batch(s, r.id, "fine"):
+    for o in latest_batch(s, r.id, "fine", since=r.prices_since):
         key = (o.outbound_date, o.return_date, o.destination, o.airlines)
         if key in seen:
             continue

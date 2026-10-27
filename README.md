@@ -68,7 +68,8 @@ docker compose logs -f monitor
 
 ### WhatsApp (Evolution API)
 
-1. Suba o compose; abra `http://localhost:8080/manager` com a `EVOLUTION_APIKEY`.
+1. Suba o compose; abra `http://localhost:8080/manager` com a `EVOLUTION_APIKEY`. A porta só escuta na própria máquina; numa VPS, use um túnel SSH (`ssh -L 8080:localhost:8080 servidor`).
+   O banco `evolution` é criado pelo Postgres na primeira subida (`docker/postgres-init/`). Se o volume já existia antes disso: `docker compose exec db psql -U monitor -c "CREATE DATABASE evolution"`.
 2. Crie a instância `monitor` e leia o QR code com o celular que vai **enviar** os alertas (pode ser um chip secundário — é integração não oficial, há risco de bloqueio).
 3. `WHATSAPP_TO` é o número que **recebe**, com DDI+DDD sem símbolos (ex.: `5584999999999`).
 

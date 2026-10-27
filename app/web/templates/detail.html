@@ -57,7 +57,7 @@
   <div>
     <div class="kpi-label">Preço normal da rota</div>
     <div class="kpi-value">{{ fmt.brl(v.ref) }}</div>
-    <div class="kpi-sub">{% if v.ref %}Mediana do melhor preço de {{ fmt.num(v.samples) }} busca{% if v.samples != 1 %}s{% endif %}{% else %}Sem buscas ainda{% endif %}</div>
+    <div class="kpi-sub">{% if v.ref %}Calculado com {{ fmt.num(v.samples) }} busca{% if v.samples != 1 %}s{% endif %} dos últimos 30 dias{% else %}Sem buscas ainda{% endif %}</div>
   </div>
   <div>
     <div class="kpi-label">Teto que você definiu</div>
@@ -160,7 +160,7 @@
         <td>{{ (o.airlines or '').split(',')[0] }}</td>
         <td>{{ fmt.stops(o.stops)|capitalize }}</td>
         <td class="r p {% if deal %}is-deal{% endif %}">{{ fmt.brl(o.price) }}</td>
-        <td class="r num {% if deal %}is-deal{% endif %}">{% if v.ref %}{{ ((o.price / v.ref - 1) * 100)|round|int }}%{% else %}—{% endif %}</td>
+        <td class="r num {% if deal %}is-deal{% endif %}">{% set pct = v.vs_ref(o.price) %}{% if pct is not none %}{{ pct }}%{% else %}—{% endif %}</td>
         <td class="r">{% if o.url %}<a href="{{ o.url }}" target="_blank" rel="noopener">Comprar</a>{% endif %}</td>
       </tr>
       {% endfor %}

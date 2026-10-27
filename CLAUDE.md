@@ -19,6 +19,18 @@ Segunda funcionalidade: **monitor de bônus de transferência de pontos para a A
 
 O **preço normal** é a mediana do menor preço de cada busca detalhada dos últimos 30 dias: **uma amostra por busca**, nunca todas as ofertas. Usar todas inflava o normal com tarifas caras de outras datas e companhias, gerando alertas falsos (bug corrigido; não reintroduzir). Mediana em vez de média para um valor isolado absurdo não distorcer.
 
+- Buscas manuais ("Buscar agora") **não entram** no preço normal: cliques seguidos puxariam a mediana para um momento só.
+- Ao editar origem, destinos, datas, duração, tolerância, adultos ou escalas, a rota grava `prices_since` e o histórico anterior deixa de valer (preço normal, "menor preço agora", gráfico, candidatas e dedup). A rota volta à fase 1. Teto, queda %, amostras e canais não reiniciam nada.
+- Nas telas, a comparação com o normal (%) só aparece na fase 2.
+
+### Alertas e ciclo de vida da rota
+
+- As ofertas que viram alerta numa rodada saem **numa mensagem só** (a melhor em destaque, as outras datas abaixo). Cada oferta continua com dedup de 24h, a menos que caia mais 5%.
+- Um alerta que nenhum canal entregou fica registrado (o painel mostra "Nenhum canal entregou"), mas não bloqueia a próxima rodada. Rota com os dois canais desligados não registra alerta.
+- As candidatas da busca detalhada são as N **datas de ida** mais baratas, uma opção por data (sem isso, durações vizinhas da mesma data ocupavam todas as vagas).
+- Datas de ida que já passaram não são buscadas (`Watch.search_window()` começa hoje). Quando o período inteiro passa, a rota é pausada sozinha e chega um aviso.
+- "Buscar agora" e o `--run-now` do contêiner reaproveitam uma varredura do calendário com menos de 12h (`COARSE_FRESH`).
+
 ## Como funciona
 
 ```
@@ -26,7 +38,7 @@ agendador (APScheduler)
   ├─ varredura grossa 1x/dia (COARSE_CRON) ─ calendário de preços do Google por destino × duração
   │     → escolhe as N datas mais baratas (candidates)
   └─ busca fina 3x/dia (FINE_CRON) ─ voos reais nas datas candidatas
-        → grava preços → regras (app/rules.py) → alerta (e-mail/WhatsApp) → dedup 24h
+        → grava preços → regras (app/rules.py) → 1 mensagem por rodada (e-mail/WhatsApp) → dedup 24h por oferta
 cada rodada → search_runs (status, consultas, falhas, melhor preço)
   → alimenta o preço normal, o status no painel e o aviso de coleta quebrada (2 falhas seguidas)
 painel web (FastAPI) lê o mesmo banco
@@ -42,6 +54,7 @@ painel web (FastAPI) lê o mesmo banco
 - `app/bonus/parser.py` extrai do título o programa de origem, o percentual máximo e a data final. Ignora posts em que a Azul é a origem ("da Azul para ALL Accor") e posts só de outras companhias. Casos reais ficam em `tests/test_bonus_parser.py`: **ao mexer no parser, adicione o título que motivou a mudança como caso de teste**.
 - Os posts de vários blogs sobre a mesma campanha (mesmo programa, data final igual ou próxima, até 21 dias) viram uma `BonusCampaign`.
 - Regras de aviso (decisão do Wesley; padrão: todos os programas, mínimo 80%): avisa uma vez por campanha, de novo se o percentual subir e lembra no último dia, a menos que ele marque "Já transferi". Preferências na tabela `bonus_settings`, editáveis na aba Bônus Azul.
+- A campanha é datada pela **data do post**, não pela leitura: na primeira leitura o feed traz posts antigos, que não podem parecer campanhas de agora. Um aviso só conta como dado se algum canal entregou; senão tenta de novo na próxima leitura.
 - Cada feed é monitorado como uma rota: `search_runs` com `watch_id = "bonus:<fonte>"` e `kind = "feed"`, e aviso depois de 2 falhas seguidas.
 - Leitura a cada 2 horas (`BONUS_CRON`); fontes trocáveis por `BONUS_FEEDS` no `.env`.
 

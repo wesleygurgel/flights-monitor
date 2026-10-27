@@ -12,12 +12,18 @@ from .config import Watch, env
 log = logging.getLogger(__name__)
 
 
-def format_message(watch: Watch, destination: str, o: Offer, reasons: list[str]) -> tuple[str, str]:
+def format_message(watch: Watch, deals: list[tuple[str, Offer, list[str]]]) -> tuple[str, str]:
+    """Uma mensagem por rodada: a melhor oferta em destaque e as outras datas baratas abaixo."""
     from .rules import join_reasons, money
-    from .web.fmt import city, d_long
+    from .web.fmt import city, d_long, range_short
 
+    deals = sorted(deals, key=lambda d: d[1].price)
+    destination, o, reasons = deals[0]
     price = money(o.price, watch.currency)
     subject = f"{watch.origin} para {destination} por {price}, ida {d_long(o.outbound_date)}"
+    if len(deals) > 1:
+        extra = len(deals) - 1
+        subject += f" (+{extra} data{'s' if extra > 1 else ''})"
     stops = "sem escalas" if o.stops == 0 else ("1 escala" if o.stops == 1 else f"{o.stops} escalas")
     body = (
         f"*{city(watch.origin)} para {city(destination)} ({destination}) por {price}*\n"
@@ -26,6 +32,19 @@ def format_message(watch: Watch, destination: str, o: Offer, reasons: list[str])
         f"Por que avisei: {join_reasons(reasons)}.\n\n"
         f"Comprar: {o.url}"
     )
+    if len(deals) > 1:
+        body += "\n\nOutras datas baratas:\n" + "\n".join(
+            f"{range_short(x.outbound_date, x.return_date)}, {dest}, {money(x.price, watch.currency)}: {x.url}"
+            for dest, x, _ in deals[1:])
+    return subject, body
+
+
+def format_expired_message(label: str, depart_to: str) -> tuple[str, str]:
+    from .web.fmt import d_long
+
+    subject = f"Rota {label} encerrada"
+    body = (f"*O período de ida de {label} terminou em {d_long(depart_to)}.*\n"
+            "Pausei a rota para não buscar datas que já passaram. Para continuar, edite as datas no painel.")
     return subject, body
 
 
@@ -58,8 +77,14 @@ class EmailNotifier:
         msg["From"] = env("SMTP_USER")
         msg["To"] = env("EMAIL_TO")
         msg.set_content(body.replace("*", ""))
-        with smtplib.SMTP(env("SMTP_HOST"), int(env("SMTP_PORT", "587"))) as smtp:
-            smtp.starttls()
+        port = int(env("SMTP_PORT", "587"))
+        if port == 465:  # SSL direto
+            conn = smtplib.SMTP_SSL(env("SMTP_HOST"), port)
+        else:
+            conn = smtplib.SMTP(env("SMTP_HOST"), port)
+        with conn as smtp:
+            if port != 465:
+                smtp.starttls()
             smtp.login(env("SMTP_USER"), env("SMTP_PASS"))
             smtp.send_message(msg)
 

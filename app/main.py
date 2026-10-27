@@ -68,7 +68,8 @@ def cmd_serve(args) -> None:
     log.info("scheduler ativo: coarse='%s' fine='%s' bonus='%s' tz=%s", settings.coarse_cron, settings.fine_cron,
              settings.bonus_cron, settings.tz)
     if args.run_now:
-        cmd_run(args)
+        from .pipeline import startup_cycle
+        startup_cycle(active_watches(), get_collector(args.collector), active_notifiers(args.dry_run))
     sched.start()
 
 

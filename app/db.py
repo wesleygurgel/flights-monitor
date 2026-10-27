@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, create_engine, select, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, create_engine, select, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session, sessionmaker
 
 from .config import Watch, settings
@@ -44,6 +45,8 @@ class Route(Base):
     notify_email: Mapped[bool] = mapped_column(Boolean, default=True)
     notify_whatsapp: Mapped[bool] = mapped_column(Boolean, default=True)
     paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # quando origem, destinos, datas, duração, adultos ou escalas mudaram: buscas anteriores não comparam
+    prices_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     @property
@@ -59,6 +62,7 @@ class Route(Base):
             drop_pct=self.drop_pct, min_samples=self.min_samples, candidates=self.candidates,
             currency=self.currency, active=self.active,
             notify_email=self.notify_email, notify_whatsapp=self.notify_whatsapp,
+            prices_since=self.prices_since,
         )
 
 
@@ -179,6 +183,28 @@ engine = create_engine(settings.database_url, future=True, connect_args=_connect
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
+MIGRATION_LOCK_KEY = 7_204_611  # chave arbitrária do pg_advisory_lock deste app
+
+
+@contextmanager
+def migration_lock(eng=None):
+    """No Postgres, monitor e web sobem juntos: a trava faz um esperar o outro migrar e popular."""
+    eng = eng or engine
+    if eng.dialect.name != "postgresql":
+        yield
+        return
+    conn = eng.connect()
+    try:
+        conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": MIGRATION_LOCK_KEY})
+        try:
+            yield
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": MIGRATION_LOCK_KEY})
+            conn.commit()
+    finally:
+        conn.close()
+
+
 def migrate() -> None:
     """Aplica as migrações do Alembic (alembic upgrade head).
 
@@ -202,8 +228,9 @@ def migrate() -> None:
 
 
 def init_db() -> None:
-    migrate()
-    seed_routes_from_yaml()
+    with migration_lock():
+        migrate()
+        seed_routes_from_yaml()
 
 
 def seed_routes_from_yaml() -> int:
@@ -230,21 +257,23 @@ def active_watches() -> list[Watch]:
         return [r.to_watch() for r in rows]
 
 
-def baseline(s: Session, watch_id: str, days: int = 30) -> tuple[float | None, int]:
+def baseline(s: Session, watch_id: str, days: int = 30, since: datetime | None = None) -> tuple[float | None, int]:
     """Preço normal da rota: mediana do menor preço de cada busca fina dos últimos N dias.
 
     Uma amostra por busca (o melhor preço daquela rodada), não todas as ofertas: senão as
     tarifas caras de outras datas e companhias inflam o "normal" e geram alertas falsos.
     A busca em andamento não entra (o melhor preço dela só é gravado ao terminar).
+    Buscas manuais ("Buscar agora") não entram: cliques seguidos puxariam o normal para um momento só.
+    `since`: buscas antes da última mudança de parâmetros da rota não valem.
     Mediana em vez de média: um valor absurdo isolado não distorce a referência.
     """
-    from datetime import timedelta
-
-    since = utcnow() - timedelta(days=days)
+    start = utcnow() - timedelta(days=days)
+    if since and as_utc(since) > start:
+        start = as_utc(since)
     rows = s.execute(
         select(SearchRun.best_price)
-        .where(SearchRun.watch_id == watch_id, SearchRun.kind == "fine",
-               SearchRun.best_price.is_not(None), SearchRun.started_at >= since)
+        .where(SearchRun.watch_id == watch_id, SearchRun.kind == "fine", SearchRun.trigger != "manual",
+               SearchRun.best_price.is_not(None), SearchRun.started_at >= start)
         .order_by(SearchRun.best_price)
     ).scalars().all()
     n = len(rows)
@@ -254,11 +283,14 @@ def baseline(s: Session, watch_id: str, days: int = 30) -> tuple[float | None, i
     return med, n
 
 
-def last_alert(s: Session, watch_id: str, offer_key: str) -> Alert | None:
+def last_alert(s: Session, watch_id: str, offer_key: str, since: datetime | None = None) -> Alert | None:
+    """Último alerta ENTREGUE dessa oferta (um que nenhum canal entregou não bloqueia o próximo)."""
+    q = select(Alert).where(Alert.watch_id == watch_id, Alert.offer_key == offer_key,
+                            Alert.channels.is_not(None), Alert.channels != "")
+    if since:
+        q = q.where(Alert.sent_at >= as_utc(since))
     return s.execute(
-        select(Alert)
-        .where(Alert.watch_id == watch_id, Alert.offer_key == offer_key)
-        .order_by(Alert.sent_at.desc())
+        q.order_by(Alert.sent_at.desc())
         .limit(1)
     ).scalar_one_or_none()
 

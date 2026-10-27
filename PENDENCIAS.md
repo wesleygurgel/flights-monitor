@@ -13,6 +13,7 @@ O que ainda não foi feito, em ordem de prioridade. Cada item diz por que import
 - Rodar `python -m app.main run --dry-run` de uma rede doméstica e conferir no log se chegam preços na varredura (`coarse`) e na busca detalhada (`fine`).
 - Conferir se `get_calendar_graph` devolve preços para NAT → GRU/CGH/VCP e se os valores batem com o site do Google Flights.
 - Conferir se o link de compra (`Query.url()`) abre a busca certa.
+- Com 2 adultos, conferir se o calendário (`coarse`) devolve o preço por pessoa ou o total. A busca detalhada devolve o total; se o calendário for por pessoa, a escolha das candidatas e a comparação com o teto ficam inconsistentes.
 - Se vier 429: aumentar `REQUEST_DELAY`, reduzir `candidates` e o número de destinos × durações por rota.
 
 **Risco conhecido:** a biblioteca usada (fork `jumping2000/google-flights` do `fast-flights`) é não oficial e lê o RPC interno do Google. Pode quebrar sem aviso. O aviso de coleta quebrada (ver "Feito", no fim) existe justamente para isso.
@@ -85,5 +86,6 @@ Só se o uso pessoal der certo: contas de usuário, rotas por usuário, limites 
 - Migrações de banco com Alembic, aplicadas sozinhas ao iniciar.
 - O painel recusa subir com `SECRET_KEY` fraca quando a senha está ligada.
 - Testes rodando no GitHub Actions a cada push.
+- Correções da revisão de 26/10/2026 (todas com teste): campanha de bônus datada pelo post; aviso não entregue tenta de novo (bônus e passagens); banco da Evolution criado pelo Postgres e porta 8080 só local; editar parâmetros de preço reinicia o preço normal; rota com período vencido é pausada e avisa; datas passadas fora da busca; uma mensagem por rodada; candidatas em datas diferentes; busca manual fora do preço normal e reaproveitando varredura recente; `--run-now` não repete varredura recente; trava de migração no Postgres; SMTP na porta 465; textos e números do formulário.
 - Backup diário do Postgres em `./backups`, guardando 14 dias.
 - Monitor de bônus de transferência para a Azul: lê 4 blogs de milhas a cada 2 horas, agrupa os posts em campanhas, avisa campanhas acima do mínimo (padrão 80%) dos programas escolhidos, avisa de novo se o bônus subir, lembra no último dia (a menos que você marque "Já transferi") e avisa se um feed parar de funcionar. Aba "Bônus Azul" no painel com campanhas ativas, histórico de 6 meses por programa e preferências.

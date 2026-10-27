@@ -201,3 +201,126 @@ def test_config_bonus(logged):
         cfg = s.get(BonusSettings, 1)
         assert cfg.min_pct == 100 and cfg.program_list == ["Livelo", "Esfera"]
         assert cfg.notify_email and not cfg.notify_whatsapp and not cfg.active
+
+
+# ---------- correções da revisão de 26/10/2026 ----------
+
+def _form(**kw):
+    from datetime import timedelta
+    from app.config import local_today
+    base = {"origin": "NAT", "destinations": "REC", "depart_from": (local_today() + timedelta(days=30)).isoformat(),
+            "depart_to": (local_today() + timedelta(days=60)).isoformat(), "duration_days": "5",
+            "duration_tolerance": "1", "adults": "1", "max_stops": "1", "max_price": "900", "drop_pct": "20",
+            "min_samples": "20", "candidates": "3", "notify_email": "on"}
+    base.update(kw)
+    return base
+
+
+def _criar(logged, **kw):
+    r = logged.post("/gerenciar/salvar", data=_form(**kw), follow_redirects=False)
+    assert r.status_code == 303, r.text
+    return r.headers["location"].split("/")[2].split("?")[0]
+
+
+def test_mudar_parametros_de_preco_reinicia_o_preco_normal(logged):
+    from datetime import timedelta
+    from app.db import SearchRun, baseline, utcnow
+    rid = _criar(logged)
+    with SessionLocal() as s:
+        for p in (1000, 1100, 1200):
+            s.add(SearchRun(watch_id=rid, kind="fine", status="ok", best_price=p,
+                            started_at=utcnow() - timedelta(hours=1)))
+        s.commit()
+    _criar(logged, id=rid, max_price="950", notify_whatsapp="on")  # teto e canais não mudam o preço
+    with SessionLocal() as s:
+        r = s.get(Route, rid)
+        assert r.prices_since is None and baseline(s, rid, since=r.prices_since)[1] == 3
+    _criar(logged, id=rid, adults="2")  # 2 adultos: o preço dobra, o normal antigo não serve
+    with SessionLocal() as s:
+        r = s.get(Route, rid)
+        assert r.prices_since is not None
+        assert baseline(s, rid, since=r.prices_since) == (None, 0)
+        assert r.to_watch().prices_since == r.prices_since
+    logged.post(f"/rotas/{rid}/excluir")
+
+
+def test_nova_rota_com_ida_no_passado_e_recusada(logged):
+    from datetime import timedelta
+    from app.config import local_today
+    r = logged.post("/gerenciar/salvar", data=_form(depart_from=(local_today() - timedelta(days=3)).isoformat()))
+    assert r.status_code == 400 and "já passou" in r.text
+
+
+def test_editar_rota_em_andamento_aceita_inicio_no_passado(logged):
+    from datetime import timedelta
+    from app.config import local_today
+    rid = _criar(logged)
+    passado = (local_today() - timedelta(days=3)).isoformat()
+    with SessionLocal() as s:  # a janela começou há 3 dias: a rota já está em andamento
+        s.get(Route, rid).depart_from = passado
+        s.commit()
+    _criar(logged, id=rid, depart_from=passado, max_price="800")
+    logged.post(f"/rotas/{rid}/excluir")
+
+
+def test_excluir_rota_apaga_o_historico_de_buscas(logged):
+    from sqlalchemy import select
+    from app.db import SearchRun
+    rid = _criar(logged)
+    with SessionLocal() as s:
+        s.add(SearchRun(watch_id=rid, kind="fine", status="ok"))
+        s.commit()
+    logged.post(f"/rotas/{rid}/excluir")
+    with SessionLocal() as s:
+        assert s.execute(select(SearchRun).where(SearchRun.watch_id == rid)).first() is None
+
+
+@pytest.mark.parametrize("texto,esperado", [("1.200", 1200), ("1.200,50", 1200), ("20,5", 20), ("20.5", 20),
+                                            ("900", 900), ("12.345.678", 12345678)])
+def test_numeros_com_ponto_ou_virgula(texto, esperado):
+    from app.web.app import _int
+    errors = {}
+    assert _int(texto, "x", errors, 0, 100_000_000) == esperado and not errors
+
+
+def test_detalhe_nao_usa_jargao(logged):
+    assert "ediana" not in logged.get(f"/rotas/{SAO}").text
+
+
+def test_fase_1_nao_compara_com_o_normal():
+    from app.web import queries
+    with SessionLocal() as s:
+        lis = queries.route_view(s, s.get(Route, "nat-lis-demo"))   # 6 buscas: ainda na fase 1
+        sao = queries.route_view(s, s.get(Route, SAO))               # 30 dias: fase 2
+    assert lis.phase == 1 and lis.ref and lis.vs_ref(4000) is None
+    assert sao.phase == 2 and sao.vs_ref(sao.ref) == 0
+
+
+def test_destaque_na_fase_1_usa_o_teto():
+    from types import SimpleNamespace
+    from app.web import queries
+    v = SimpleNamespace(phase=1, ref=2000, best=SimpleNamespace(price=800), route=SimpleNamespace(max_price=900))
+    assert queries.deal_score(v) == pytest.approx(800 / 900)
+    v.phase = 2
+    assert queries.deal_score(v) == pytest.approx(800 / 2000)
+
+
+def test_busca_manual_reaproveita_varredura_recente(logged):
+    import time
+    from datetime import timedelta
+    from sqlalchemy import select
+    from app.db import SearchRun, utcnow
+    rid = _criar(logged)
+    with SessionLocal() as s:
+        s.add(SearchRun(watch_id=rid, kind="coarse", status="ok", started_at=utcnow() - timedelta(hours=1)))
+        s.commit()
+    logged.post(f"/rotas/{rid}/buscar", headers={"HX-Request": "true"})
+    for _ in range(50):
+        if logged.get(f"/rotas/{rid}/busca", headers={"HX-Request": "true"}).headers.get("HX-Refresh") == "true":
+            break
+        time.sleep(0.1)
+    with SessionLocal() as s:
+        kinds = list(s.execute(select(SearchRun.kind).where(SearchRun.watch_id == rid,
+                                                            SearchRun.trigger == "manual")).scalars())
+    assert "coarse" not in kinds
+    logged.post(f"/rotas/{rid}/excluir")

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import yaml
 from dotenv import load_dotenv
@@ -35,6 +37,14 @@ class Watch:
     active: bool = True
     notify_email: bool = True
     notify_whatsapp: bool = True
+    prices_since: datetime | None = None  # parâmetros de preço mudaram aqui: histórico anterior não vale
+
+    def search_window(self, today: date | None = None) -> tuple[str, str] | None:
+        """Período de ida ainda buscável: de hoje (ou do início, se futuro) até o fim. None = já passou."""
+        today = today or local_today()
+        if date.fromisoformat(self.depart_to) < today:
+            return None
+        return max(date.fromisoformat(self.depart_from), today).isoformat(), self.depart_to
 
     @property
     def durations(self) -> list[int]:
@@ -69,3 +79,8 @@ class Settings:
 
 
 settings = Settings()
+
+
+def local_today() -> date:
+    """Data de hoje no fuso configurado (TZ), não no do servidor."""
+    return datetime.now(ZoneInfo(settings.tz)).date()

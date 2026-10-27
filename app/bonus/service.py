@@ -42,26 +42,34 @@ def is_active(c: BonusCampaign, ref: date | None = None) -> bool:
     return (ref - fmt.local(c.last_seen_at).date()).days <= OPEN_WITHOUT_END_DAYS
 
 
-def _find_campaign(s: Session, program: str, ends: date | None) -> BonusCampaign | None:
-    since = utcnow() - timedelta(days=SAME_CAMPAIGN_DAYS)
+def _find_campaign(s: Session, program: str, ends: date | None, seen: datetime) -> BonusCampaign | None:
+    """Campanha do mesmo programa vista até 21 dias antes ou depois da data do post."""
+    window = timedelta(days=SAME_CAMPAIGN_DAYS)
     cands = s.execute(
-        select(BonusCampaign).where(BonusCampaign.program == program, BonusCampaign.last_seen_at >= since)
+        select(BonusCampaign).where(BonusCampaign.program == program, BonusCampaign.last_seen_at >= seen - window,
+                                    BonusCampaign.first_seen_at <= seen + window)
         .order_by(BonusCampaign.last_seen_at.desc())
     ).scalars().all()
     for c in cands:
         if ends and c.ends_on and abs((date.fromisoformat(c.ends_on) - ends).days) > 2:
             continue  # datas finais diferentes: outra campanha
-        if c.ends_on and date.fromisoformat(c.ends_on) < today() - timedelta(days=1):
-            continue  # já acabou
+        if c.ends_on and date.fromisoformat(c.ends_on) < fmt.local(seen).date() - timedelta(days=1):
+            continue  # já tinha acabado quando o post saiu
         return c
     return None
 
 
 def ingest(s: Session, source: Source, items) -> tuple[int, int]:
-    """Grava posts novos reconhecidos e atualiza campanhas. Retorna (itens lidos, posts novos de bônus)."""
+    """Grava posts novos reconhecidos e atualiza campanhas. Retorna (itens lidos, posts novos de bônus).
+
+    A campanha é datada pelo post, não pela leitura: na primeira leitura o feed traz posts de
+    semanas atrás, e eles não podem parecer campanhas de agora.
+    """
     new = 0
+    now = utcnow()
     for it in items:
-        pub_local = fmt.local(it.published).date() if it.published else today()
+        seen = min(as_utc(it.published), now) if it.published else now
+        pub_local = fmt.local(seen).date()
         p = parse(it.title, it.summary, pub_local)
         if not p:
             continue
@@ -78,11 +86,11 @@ def ingest(s: Session, source: Source, items) -> tuple[int, int]:
             new += 1
             if program is None:
                 continue
-            c = _find_campaign(s, program, p.ends_on)
+            c = _find_campaign(s, program, p.ends_on, seen)
             if c is None:
                 c = BonusCampaign(program=program, bonus_pct=p.bonus_pct,
                                   ends_on=p.ends_on.isoformat() if p.ends_on else None,
-                                  first_seen_at=utcnow(), last_seen_at=utcnow())
+                                  first_seen_at=seen, last_seen_at=seen)
                 s.add(c)
                 s.flush()
             else:
@@ -90,7 +98,8 @@ def ingest(s: Session, source: Source, items) -> tuple[int, int]:
                     c.bonus_pct = p.bonus_pct
                 if p.ends_on and not c.ends_on:
                     c.ends_on = p.ends_on.isoformat()
-                c.last_seen_at = utcnow()
+                c.first_seen_at = min(as_utc(c.first_seen_at), seen)
+                c.last_seen_at = max(as_utc(c.last_seen_at), seen)
             if p.notes and not c.note:
                 c.note = p.notes[0]
             post.campaign_id = c.id
@@ -154,7 +163,8 @@ def evaluate_alerts(s: Session, cfg: BonusSettings, notifiers: list) -> list[tup
         if not kind:
             continue
         subject, body = _message(s, c, kind)
-        notify_all(chans, subject, body)
+        if not notify_all(chans, subject, body):
+            continue  # nenhum canal entregou (ou todos desligados): tenta de novo na próxima leitura
         if kind == "reminder":
             c.reminder_at = utcnow()
         else:

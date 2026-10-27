@@ -12,15 +12,16 @@ from datetime import timedelta
 from sqlalchemy import select
 
 from .collectors import Collector, CoarsePrice
-from .config import Watch
-from .db import Alert, PriceSnapshot, SearchRun, SessionLocal, utcnow
-from .notifiers import format_health_message, format_message, notify_all
+from .config import Watch, local_today
+from .db import Alert, PriceSnapshot, Route, SearchRun, SessionLocal, as_utc, utcnow
+from .notifiers import format_expired_message, format_health_message, format_message, notify_all
 from .rules import evaluate, join_reasons, offer_key
 
 log = logging.getLogger(__name__)
 
 FAIL_STREAK_ALERT = 2  # avisa quando a rota acumula 2 rodadas seguidas sem resultado
 STALE_RUNNING = timedelta(minutes=30)  # rodada "em andamento" mais velha que isso é considerada morta
+COARSE_FRESH = timedelta(hours=12)  # varredura mais nova que isso é reaproveitada (busca manual, reinício)
 
 
 class RunStats:
@@ -79,9 +80,22 @@ def tracked_run(watch: Watch, kind: str, trigger: str):
                  stats.queries, stats.failures, stats.results)
 
 
+def pick_candidates(found: list[tuple[str, CoarsePrice]], n: int) -> list[tuple[str, CoarsePrice]]:
+    """As N datas de ida mais baratas, uma opção (destino x duração) por data.
+
+    Sem isso, durações vizinhas da mesma data ocupam todas as vagas e a busca detalhada
+    olha uma data só em vez de explorar o calendário.
+    """
+    best: dict[str, tuple[str, CoarsePrice]] = {}
+    for dest, c in sorted(found, key=lambda t: t[1].price):
+        best.setdefault(c.outbound_date, (dest, c))
+    return sorted(best.values(), key=lambda t: t[1].price)[:n]
+
+
 def run_coarse(watch: Watch, collector: Collector, trigger: str = "schedule") -> list[tuple[str, CoarsePrice]]:
-    """Varre o calendário para cada destino x duração. Retorna as N (destino, data) mais baratas."""
+    """Varre o calendário para cada destino x duração. Retorna as N datas de ida mais baratas."""
     found: list[tuple[str, CoarsePrice]] = []
+    today = local_today().isoformat()
     with tracked_run(watch, "coarse", trigger) as stats, SessionLocal() as s:
         for dest in watch.destinations:
             for dur in watch.durations:
@@ -91,6 +105,7 @@ def run_coarse(watch: Watch, collector: Collector, trigger: str = "schedule") ->
                     stats.fail(e)
                     log.warning("coarse %s %s dur=%s falhou: %s", watch.id, dest, dur, e)
                     continue
+                entries = [e for e in entries if e.outbound_date >= today]  # data que já passou não serve
                 stats.ok([e.price for e in entries])
                 for e in entries:
                     found.append((dest, e))
@@ -100,8 +115,7 @@ def run_coarse(watch: Watch, collector: Collector, trigger: str = "schedule") ->
                         price=e.price, currency=watch.currency,
                     ))
         s.commit()
-    found.sort(key=lambda t: t[1].price)
-    return found[: watch.candidates]
+    return pick_candidates(found, watch.candidates)
 
 
 def channels_for(watch: Watch, notifiers: list) -> list:
@@ -112,9 +126,10 @@ def channels_for(watch: Watch, notifiers: list) -> list:
 
 def run_fine(watch: Watch, collector: Collector, candidates: list[tuple[str, CoarsePrice]], notifiers: list,
              trigger: str = "schedule") -> int:
-    """Busca detalhada nas candidatas, grava, avalia regras e dispara alertas. Retorna nº de alertas."""
-    sent = 0
+    """Busca detalhada nas candidatas, grava e avalia regras. As ofertas que viram alerta saem
+    numa mensagem só ao fim da rodada. Retorna nº de ofertas alertadas."""
     notifiers = channels_for(watch, notifiers)
+    deals: list[tuple[str, object, list[str]]] = []
     with tracked_run(watch, "fine", trigger) as stats, SessionLocal() as s:
         for dest, c in candidates:
             try:
@@ -139,33 +154,42 @@ def run_fine(watch: Watch, collector: Collector, candidates: list[tuple[str, Coa
             log.info("fine %s %s %s→%s best=%.0f alert=%s %s", watch.id, dest, best.outbound_date,
                      best.return_date, best.price, v.alert, v.reasons)
             if v.alert:
-                subject, body = format_message(watch, dest, best, v.reasons)
-                delivered = notify_all(notifiers, subject, body)
+                deals.append((dest, best, v.reasons))
+        if deals and not notifiers:
+            log.info("%s: %d ofertas baratas, mas a rota está sem canais de aviso", watch.id, len(deals))
+            return 0
+        if deals:
+            subject, body = format_message(watch, deals)
+            delivered = notify_all(notifiers, subject, body)  # vazio = ninguém entregou: a próxima rodada tenta de novo
+            for dest, best, reasons in deals:
                 s.add(Alert(watch_id=watch.id, offer_key=offer_key(watch, dest, best), price=best.price,
-                            reason=join_reasons(v.reasons), channels=",".join(delivered)))
-                s.commit()
-                sent += 1
-    return sent
+                            reason=join_reasons(reasons), channels=",".join(delivered)))
+            s.commit()
+    return len(deals)
 
 
 def last_candidates(watch: Watch, limit: int) -> list[tuple[str, CoarsePrice]]:
-    """Recupera as candidatas da última varredura grossa gravada (para o job fino rodar sozinho)."""
+    """Recupera as candidatas da última varredura grossa gravada (para o job fino rodar sozinho).
+
+    Ignora datas de ida que já passaram e varreduras de antes da última mudança da rota.
+    """
+    base = [PriceSnapshot.watch_id == watch.id, PriceSnapshot.source == "coarse"]
+    if watch.prices_since:
+        base.append(PriceSnapshot.observed_at >= as_utc(watch.prices_since))
     with SessionLocal() as s:
         latest = s.execute(
-            select(PriceSnapshot.observed_at).where(
-                PriceSnapshot.watch_id == watch.id, PriceSnapshot.source == "coarse"
-            ).order_by(PriceSnapshot.observed_at.desc()).limit(1)
+            select(PriceSnapshot.observed_at).where(*base).order_by(PriceSnapshot.observed_at.desc()).limit(1)
         ).scalar_one_or_none()
         if latest is None:
             return []
-        since = latest - timedelta(hours=1)  # mesma rodada de varredura
         rows = s.execute(
             select(PriceSnapshot).where(
-                PriceSnapshot.watch_id == watch.id, PriceSnapshot.source == "coarse",
-                PriceSnapshot.observed_at >= since,
-            ).order_by(PriceSnapshot.price).limit(limit)
+                *base, PriceSnapshot.observed_at >= latest - timedelta(hours=1),  # mesma rodada de varredura
+                PriceSnapshot.outbound_date >= local_today().isoformat(),
+            )
         ).scalars().all()
-    return [(r.destination, CoarsePrice(r.outbound_date, r.return_date, r.price)) for r in rows]
+    return pick_candidates([(r.destination, CoarsePrice(r.outbound_date, r.return_date, r.price)) for r in rows],
+                           limit)
 
 
 ROUTE_HINT = ("Enquanto isso, nenhum alerta de preço sai para essa rota. Se o motivo for HTTP 429, o Google "
@@ -202,10 +226,28 @@ def check_health(watch: Watch, notifiers: list) -> str | None:
     return event
 
 
+def expire_route(watch: Watch, notifiers: list) -> None:
+    """O período de ida acabou: pausa a rota e avisa (uma vez, porque depois ela fica pausada)."""
+    from .web.fmt import route_code
+
+    with SessionLocal() as s:
+        r = s.get(Route, watch.id)
+        if r is None or not r.active:
+            return
+        r.active, r.paused_at = False, utcnow()
+        s.commit()
+    log.info("%s: período de ida terminou em %s; rota pausada", watch.id, watch.depart_to)
+    subject, body = format_expired_message(route_code(watch.origin, watch.destinations), watch.depart_to)
+    notify_all(channels_for(watch, notifiers), subject, body)
+
+
 def run_watch(watch: Watch, collector: Collector, notifiers: list, trigger: str = "schedule",
               coarse: bool = True, fine: bool = True) -> dict:
     """Ciclo completo de uma rota. Usado pelo agendador, pela CLI e pelo botão "Buscar agora"."""
     out = {"candidates": 0, "alerts": 0}
+    if watch.search_window() is None:
+        expire_route(watch, notifiers)
+        return {**out, "expired": True}
     if coarse:
         cands = run_coarse(watch, collector, trigger)
     else:
@@ -219,6 +261,34 @@ def run_watch(watch: Watch, collector: Collector, notifiers: list, trigger: str 
     return out
 
 
+def recent_run(watch_id: str, kind: str, fresh: timedelta = COARSE_FRESH, since=None) -> bool:
+    """Houve rodada desse tipo que funcionou dentro do prazo (e depois da última mudança da rota)?"""
+    start = utcnow() - fresh
+    if since and as_utc(since) > start:
+        start = as_utc(since)
+    with SessionLocal() as s:
+        return s.execute(
+            select(SearchRun.id).where(SearchRun.watch_id == watch_id, SearchRun.kind == kind,
+                                       SearchRun.status.in_(("ok", "partial")), SearchRun.started_at >= start)
+            .limit(1)
+        ).first() is not None
+
+
+def startup_cycle(watches: list[Watch], collector: Collector, notifiers: list) -> list[str]:
+    """Ciclo ao subir o contêiner: só nas rotas sem varredura recente, para um reinício não repetir buscas."""
+    ran: list[str] = []
+    for w in watches:
+        if recent_run(w.id, "coarse", since=w.prices_since):
+            log.info("%s: varredura recente, ciclo inicial pulado", w.id)
+            continue
+        try:
+            run_watch(w, collector, notifiers, trigger="schedule")
+        except Exception:  # uma rota com problema não impede as outras
+            log.exception("%s: ciclo inicial interrompido", w.id)
+        ran.append(w.id)
+    return ran
+
+
 def is_running(watch_id: str) -> bool:
     with SessionLocal() as s:
         run = s.execute(
@@ -227,5 +297,4 @@ def is_running(watch_id: str) -> bool:
         ).scalar_one_or_none()
     if not run:
         return False
-    from .db import as_utc
     return utcnow() - as_utc(run.started_at) < STALE_RUNNING

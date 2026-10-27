@@ -50,11 +50,14 @@ class GoogleFlightsCollector:
     def coarse(self, watch: Watch, destination: str, duration: int) -> list[CoarsePrice]:
         from fast_flights import get_calendar_graph
 
+        window = watch.search_window()
+        if window is None:
+            return []
         _sleep()
         cal = get_calendar_graph(
             from_airport=watch.origin,
             to_airport=destination,
-            date_range=(watch.depart_from, watch.depart_to),
+            date_range=window,
             trip_duration=duration,
             adults=watch.adults,
             max_stops=watch.max_stops,
@@ -110,8 +113,10 @@ class MockCollector:
 
     def coarse(self, watch: Watch, destination: str, duration: int) -> list[CoarsePrice]:
         out: list[CoarsePrice] = []
-        d = date.fromisoformat(watch.depart_from)
-        end = date.fromisoformat(watch.depart_to)
+        window = watch.search_window()
+        if window is None:
+            return out
+        d, end = date.fromisoformat(window[0]), date.fromisoformat(window[1])
         while d <= end:
             base = 1300 + 400 * (d.weekday() in (4, 6))
             price = base + self.rng.uniform(-250, 350)

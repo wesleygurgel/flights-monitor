@@ -99,8 +99,6 @@ def parse(title: str, summary: str = "", published: date | None = None) -> Parse
         return None
     if AZUL_ORIGIN.search(t):
         return None
-    if "clube azul" in t and "transf" not in t.replace("clube azul", ""):
-        return None
 
     notes: list[str] = []
     # post sobre várias companhias ("LATAM Pass e Azul com até 120%"): o % pode ser da outra

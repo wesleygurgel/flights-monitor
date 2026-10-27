@@ -120,3 +120,48 @@ def test_le_rss_do_wordpress():
     items = parse_feed(xml)
     assert len(items) == 2
     assert items[0].published.year == 2026 and "bônus & mais" in items[0].summary
+
+
+def fonte_antiga(titulo, dias_atras, nome="Blog antigo"):
+    pub = datetime.now(timezone.utc) - timedelta(days=dias_atras)
+    return StaticSource(nome, [FeedItem(titulo, f"https://exemplo.invalid/{nome}/{abs(hash(titulo))}", pub)])
+
+
+def test_post_antigo_sem_data_final_nao_vira_campanha_ativa():
+    """Na primeira leitura o feed traz posts de semanas atrás: não podem gerar alerta como se fossem novos."""
+    spy = Spy()
+    out = service.run_bonus([spy], [fonte_antiga("Azul oferece até 100% de bônus na transferência de pontos Livelo", 30)])
+    assert out["alerts"] == [] and spy.sent == []
+    with SessionLocal() as s:
+        c = s.execute(select(BonusCampaign)).scalars().one()
+        assert not service.is_active(c)
+        assert (service.today() - service.fmt.local(c.first_seen_at).date()).days == 30
+
+
+def test_post_antigo_com_data_final_futura_continua_valendo():
+    fim = data_pt(service.today() + timedelta(days=3))
+    out = service.run_bonus([Spy()], [fonte_antiga(
+        f"Azul oferece até 100% de bônus na transferência de pontos Esfera até {fim}", 10)])
+    assert [k for k, _ in out["alerts"]] == ["new"]
+
+
+def test_posts_antigos_de_campanhas_diferentes_nao_se_misturam():
+    titulo = "Azul oferece até 90% de bônus na transferência de pontos Livelo"
+    service.run_bonus([Spy()], [fonte_antiga(titulo, 60, nome="A"), fonte_antiga(titulo + " de novo", 2, nome="B")])
+    with SessionLocal() as s:
+        assert len(s.execute(select(BonusCampaign)).scalars().all()) == 2
+
+
+def test_alerta_de_bonus_nao_entregue_e_tentado_de_novo():
+    class Quebrado:
+        name = "email"
+
+        def send(self, subject, body):
+            raise RuntimeError("SMTP fora do ar")
+
+    fim = data_pt(service.today() + timedelta(days=5))
+    titulo = f"Azul oferece até 100% de bônus na transferência de pontos Livelo até {fim}"
+    assert service.run_bonus([Quebrado()], [fonte(titulo)])["alerts"] == []
+    spy = Spy()
+    assert [k for k, _ in service.run_bonus([spy], [])["alerts"]] == ["new"]
+    assert len(spy.sent) == 1

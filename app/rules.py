@@ -42,7 +42,7 @@ def evaluate(s: Session, watch: Watch, destination: str, o: Offer) -> Verdict:
     if watch.max_price is not None and o.price <= watch.max_price:
         reasons.append(f"abaixo do teto de {money(watch.max_price, watch.currency)}")
 
-    med, n = baseline(s, watch.id, 30)
+    med, n = baseline(s, watch.id, 30, since=watch.prices_since)
     if watch.drop_pct and med and n >= watch.min_samples:
         if o.price <= med * (1 - watch.drop_pct / 100):
             pct = (1 - o.price / med) * 100
@@ -55,7 +55,7 @@ def evaluate(s: Session, watch: Watch, destination: str, o: Offer) -> Verdict:
         return Verdict(False, [])
 
     # dedup: mesma oferta alertada recentemente?
-    prev = last_alert(s, watch.id, offer_key(watch, destination, o))
+    prev = last_alert(s, watch.id, offer_key(watch, destination, o), since=watch.prices_since)
     if prev and utcnow() - as_utc(prev.sent_at) < REALERT_AFTER:
         if o.price > prev.price * (1 - REALERT_DROP_PCT / 100):
             return Verdict(False, ["já alertado nas últimas 24h"])
