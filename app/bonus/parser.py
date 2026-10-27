@@ -42,6 +42,13 @@ LAST_DAY = re.compile(r"\b(ultimo dia|ultimas horas|acaba hoje|termina hoje|term
 PCT = re.compile(r"(\d{2,3})\s*(?:%|por ?cento|porcento)")
 END_TEXT = re.compile(r"\bate (?:o dia )?(\d{1,2})(?:o)? de (" + "|".join(MESES) + r")(?: de (\d{4}))?")
 END_NUM = re.compile(r"\bate (?:o dia )?(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?")
+# "até quarta-feira (28)", "até 23h59 de sexta-feira (30)": só o dia, o mês vem da data do post
+END_WEEKDAY = re.compile(r"\bate (?:as )?(?:\d{1,2}h\d{0,2} (?:de |do dia )?)?"
+                         r"(?:segunda|terca|quarta|quinta|sexta|sabado|domingo)(?:-feira)? \((\d{1,2})\)")
+# frase que tira programas da campanha ("Livelo e Esfera não estão presentes na campanha")
+NEGATED = re.compile(r"\bnao (?:estao|esta|participa\w*|fazem? parte|entram?|inclu\w*|contempla\w*|valem?)\b"
+                     r"|\bfic(?:a|am|ou|aram) de fora\b|\bfora d[ae] (?:campanha|promocao|oferta)\b")
+EXCEPT = re.compile(r"\b(?:exceto|com excecao d[eoa]s?)\b")
 # Azul como ORIGEM dos pontos ("pontos da Azul para ALL Accor") não interessa
 AZUL_ORIGIN = re.compile(r"\b(?:da|do|de) (?:azul|tudoazul)(?: fidelidade)? (?:para|pro|ao|a) ")
 OTHER_DEST = re.compile(r"\b(smiles|latam pass|latam|tap|all accor|accor|iberia|avios|aeroplan|flying blue)\b")
@@ -62,8 +69,16 @@ class ParsedBonus:
 
 
 def _programs(t: str) -> list[str]:
-    found = [name for name, pats in PROGRAMS.items() if any(re.search(p, t) for p in pats)]
-    if not found and re.search(r"\bbancos?\b", t):
+    """Programas citados, sem os que o texto exclui (frase negativa inteira ou o que vem depois de "exceto")."""
+    kept = []
+    for sentence in re.split(r"[.;!?](?:\s|$)", t):
+        if NEGATED.search(sentence):
+            continue
+        m = EXCEPT.search(sentence)
+        kept.append(sentence[:m.start()] if m else sentence)
+    text = " | ".join(kept)
+    found = [name for name, pats in PROGRAMS.items() if any(re.search(p, text) for p in pats)]
+    if not found and re.search(r"\bbancos?\b|\bcartoes de credito\b", text):
         found = [GENERIC_BANKS]
     return found
 
@@ -76,7 +91,17 @@ def _end_date(t: str, published: date | None) -> date | None:
     else:
         m = END_NUM.search(t)
         if not m:
-            return None
+            m = END_WEEKDAY.search(t)
+            if not m:
+                return None
+            day = int(m.group(1))
+            month, year = ref.month, ref.year
+            if day < ref.day:  # "até sexta-feira (2)" publicado no fim do mês
+                month, year = (1, year + 1) if month == 12 else (month + 1, year)
+            try:
+                return date(year, month, day)
+            except ValueError:
+                return None
         day, month, year = int(m.group(1)), int(m.group(2)), m.group(3)
         if year and len(year) == 2:
             year = "20" + year

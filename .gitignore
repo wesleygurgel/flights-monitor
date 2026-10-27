@@ -5,3 +5,5 @@ __pycache__/
 demo.db
 .pytest_cache/
 backups/
+.browser-profile/
+.playwright-mcp/

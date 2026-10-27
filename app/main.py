@@ -6,6 +6,7 @@
   python -m app.main serve      # scheduler (modo contêiner)
   python -m app.main history    # últimos preços gravados
   python -m app.main bonus      # lê os feeds de bônus de transferência para a Azul agora
+  python -m app.main prune      # apaga varreduras do calendário com mais de 90 dias
   python -m app.main demo       # popula 30 dias de histórico fictício (só para testar o painel)
   python -m app.main web        # painel em http://localhost:8000
 
@@ -56,6 +57,11 @@ def cmd_bonus(args) -> None:
     log.info("bônus: %s", out)
 
 
+def cmd_prune(args) -> None:
+    from .db import prune_snapshots
+    log.info("limpeza: %d preços de varredura com mais de 90 dias apagados", prune_snapshots(90))
+
+
 def cmd_serve(args) -> None:
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -65,6 +71,7 @@ def cmd_serve(args) -> None:
     sched.add_job(lambda: cmd_coarse(args), CronTrigger.from_crontab(settings.coarse_cron), id="coarse")
     sched.add_job(lambda: cmd_fine(args), CronTrigger.from_crontab(settings.fine_cron), id="fine")
     sched.add_job(lambda: cmd_bonus(args), CronTrigger.from_crontab(settings.bonus_cron), id="bonus")
+    sched.add_job(lambda: cmd_prune(args), CronTrigger.from_crontab("30 4 * * *"), id="prune")
     log.info("scheduler ativo: coarse='%s' fine='%s' bonus='%s' tz=%s", settings.coarse_cron, settings.fine_cron,
              settings.bonus_cron, settings.tz)
     if args.run_now:
@@ -99,7 +106,7 @@ def cmd_web(args) -> None:
 
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="monitor-passagens")
-    p.add_argument("cmd", choices=["run", "coarse", "fine", "serve", "history", "demo", "web", "bonus"])
+    p.add_argument("cmd", choices=["run", "coarse", "fine", "serve", "history", "demo", "web", "bonus", "prune"])
     p.add_argument("--collector", default=settings.collector)
     p.add_argument("--trigger", default="cli", help=argparse.SUPPRESS)
     p.add_argument("--dry-run", action="store_true")
@@ -109,7 +116,8 @@ def main(argv=None) -> None:
     args = p.parse_args(argv)
     init_db()
     {"run": cmd_run, "coarse": cmd_coarse, "fine": cmd_fine, "serve": cmd_serve, "history": cmd_history,
-     "demo": cmd_demo, "web": cmd_web, "bonus": cmd_bonus}[args.cmd](args)
+     "demo": cmd_demo, "web": cmd_web, "bonus": cmd_bonus,
+     "prune": cmd_prune}[args.cmd](args)
 
 
 if __name__ == "__main__":

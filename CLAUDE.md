@@ -44,7 +44,10 @@ cada rodada → search_runs (status, consultas, falhas, melhor preço)
 painel web (FastAPI) lê o mesmo banco
 ```
 
-- Fonte de preços: Google Flights pela biblioteca não oficial `fast-flights` (fork `jumping2000/google-flights`, que tem `get_calendar_graph`). Pode quebrar sem aviso e o Google bloqueia IP de datacenter (HTTP 429). Por isso o coletor é um adaptador trocável e existe o monitoramento de saúde.
+- Fonte de preços: Google Flights, sem API oficial. Pode quebrar sem aviso e o Google bloqueia IP de datacenter (HTTP 429/captcha). Por isso o coletor é um adaptador trocável e existe o monitoramento de saúde.
+  - **Busca detalhada:** HTTP direto (`fetch_flights_html` do `fast-flights`, fork `jumping2000/google-flights`), mas o parser é nosso (`parse_search_payload`): lê "Principais voos" (`payload[2]`) e "Outros voos" (`payload[3]`). O parser da biblioteca só lia o segundo e perdia os mais baratos. O indicador do Google vem de `payload[5][0]` (1 = baixo).
+  - **Calendário:** desde out/2026 o Google exige um token anti-robô (BotGuard) no `GetCalendarGraph`, então `get_calendar_graph` da biblioteca não funciona mais (volta vazio). A varredura abre Chromium headless (Playwright), clica em "Gráfico de preços" e lê a resposta. Cada página cobre 60 dias a partir de (ida de referência − 7). Alterar o corpo da requisição invalida o token. Captcha (`/sorry/`) pausa o calendário por 30 min.
+  - O indicador "preço baixo" do Google só reforça um alerta; não dispara sozinho (decisão do Wesley).
 - Amadeus Self-Service foi descartado: a API foi encerrada em julho de 2026.
 - Skyscanner e companhias aéreas direto ficaram para depois (exigem Playwright por causa do anti-bot).
 
@@ -64,7 +67,7 @@ painel web (FastAPI) lê o mesmo banco
 |---|---|
 | `app/config.py` | `Settings` (variáveis de ambiente) e o dataclass `Watch` (uma rota em memória) |
 | `app/db.py` | Modelos SQLAlchemy (`Route`, `PriceSnapshot`, `SearchRun`, `Alert`), `baseline()` (preço normal), `migrate()`/`init_db()` |
-| `app/collectors.py` | Interface `Collector` com `coarse()` e `fine()`; `GoogleFlightsCollector` (real) e `MockCollector` (testes/demo) |
+| `app/collectors.py` | Interface `Collector` com `coarse()` e `fine()`; `GoogleFlightsCollector` (calendário por Playwright, busca por HTTP) e `MockCollector` (testes/demo). Respostas reais gravadas em `tests/fixtures/` |
 | `app/rules.py` | `evaluate()`: decide se uma oferta vira alerta; fases 1 e 2, dedup de 24h |
 | `app/pipeline.py` | `run_watch()` (ciclo completo de uma rota), `tracked_run()` (registra a rodada), `check_health()` (aviso de falha/recuperação) |
 | `app/bonus/parser.py` | Lê títulos de posts e extrai programa, % de bônus e data final |
@@ -99,6 +102,7 @@ Direção visual: **carta aeronáutica + fitas de progresso de voo** (as tiras q
 
 ```bash
 pip install -r requirements.txt pytest pyflakes
+playwright install chromium            # navegador do calendário de preços
 python -m pytest -q                      # testes (usam mock, sem internet)
 python -m pyflakes app tests             # lint usado no CI
 
@@ -108,6 +112,7 @@ python -m app.main demo && python -m app.main web     # http://localhost:8000
 
 python -m app.main run --dry-run         # coleta real, alertas só no console
 python -m app.main bonus --dry-run       # lê os feeds de bônus de verdade, alertas só no console
+python -m app.main prune                 # apaga varreduras com mais de 90 dias (roda sozinho às 4h30)
 alembic revision --autogenerate -m "..." # nova migração depois de mudar app/db.py
 docker compose up -d --build             # db, monitor, web, backup, evolution
 ```
@@ -124,4 +129,4 @@ docker compose up -d --build             # db, monitor, web, backup, evolution
 
 ## Estado atual
 
-Implementado e testado com dados simulados. **A coleta real no Google Flights ainda não foi validada**, nem a leitura real dos feeds de bônus, nem o WhatsApp pela Evolution API, nem o `docker compose` completo. Esses são os primeiros itens de `PENDENCIAS.md`. Ao concluir uma pendência, mova-a para a seção "Feito" desse arquivo.
+Validado com dados reais em 26/10/2026: busca detalhada no Google Flights, os 4 feeds de bônus e o `docker compose` completo. **Falta confirmar a varredura do calendário num ciclo completo sem captcha** e ler o QR code do WhatsApp. Esses são os primeiros itens de `PENDENCIAS.md`. **Nos testes manuais contra o Google, poucas consultas e espaçadas**: muitas seguidas levam a captcha por horas. Ao concluir uma pendência, mova-a para a seção "Feito" desse arquivo.

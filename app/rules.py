@@ -48,11 +48,12 @@ def evaluate(s: Session, watch: Watch, destination: str, o: Offer) -> Verdict:
             pct = (1 - o.price / med) * 100
             reasons.append(f"{pct:.0f}% abaixo do normal de {money(med, watch.currency)}")
 
-    if o.price_level == "low":
-        reasons.append("Google indica preço baixo")
-
     if not reasons:
         return Verdict(False, [])
+
+    # o "preço baixo" do Google só reforça: sozinho avisava preços acima do teto (decisão do Wesley)
+    if o.price_level == "low":
+        reasons.append("Google indica preço baixo")
 
     # dedup: mesma oferta alertada recentemente?
     prev = last_alert(s, watch.id, offer_key(watch, destination, o), since=watch.prices_since)

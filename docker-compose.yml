@@ -16,17 +16,22 @@ services:
   monitor:
     build: .
     env_file: .env
+    environment:
+      BROWSER_PROFILE: /browser/monitor  # cookies do Google para o calendário de preços
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./watchlist.yaml:/srv/watchlist.yaml:ro
+      - browser_monitor:/browser
     restart: unless-stopped
 
   web:
     build: .
     command: ["python", "-m", "app.main", "web"]
     env_file: .env
+    environment:
+      BROWSER_PROFILE: /browser/web  # "Buscar agora" abre o próprio navegador
     ports:
       - "8000:8000"
     depends_on:
@@ -34,6 +39,7 @@ services:
         condition: service_healthy
     volumes:
       - ./watchlist.yaml:/srv/watchlist.yaml:ro
+      - browser_web:/browser
     restart: unless-stopped
 
   # Backup diário do Postgres em ./backups, guardando os últimos 14 dias
@@ -49,6 +55,8 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        # espera as migrações criarem as tabelas (senão o primeiro arquivo sai vazio)
+        until psql -h db -U monitor -d monitor -tAc "select 1 from alembic_version" >/dev/null 2>&1; do sleep 10; done
         while true; do
           f=/backups/monitor-$$(date +%Y-%m-%d).sql.gz
           pg_dump -h db -U monitor monitor | gzip > "$$f" && echo "backup ok: $$f"
@@ -59,7 +67,7 @@ services:
 
   # WhatsApp (Evolution API). Remova se for usar só e-mail no começo.
   evolution:
-    image: atendai/evolution-api:latest
+    image: evoapicloud/evolution-api:v2.3.7
     environment:
       AUTHENTICATION_API_KEY: ${EVOLUTION_APIKEY}
       DATABASE_ENABLED: "true"
@@ -79,3 +87,5 @@ services:
 volumes:
   pgdata:
   evolution_instances:
+  browser_monitor:
+  browser_web:

@@ -113,3 +113,34 @@ def test_email_porta_465_usa_ssl_direto(monkeypatch):
     notifiers.EmailNotifier().send("s", "b")
     assert FakeSMTP.used == [("FakeSMTP", 587), "starttls"]
 
+
+def test_evolution_com_versao_fixa():
+    """atendai/evolution-api saiu do Docker Hub; a imagem oficial agora é evoapicloud/evolution-api."""
+    image = compose()["evolution"]["image"]
+    name, _, tag = image.partition(":")
+    assert name == "evoapicloud/evolution-api"
+    assert tag and tag != "latest"
+
+
+def test_cada_servico_tem_seu_perfil_do_navegador():
+    """O Chromium trava o perfil em uso: monitor e web não podem dividir o mesmo."""
+    svc = compose()
+    profiles = {}
+    for name in ("monitor", "web"):
+        path = svc[name]["environment"]["BROWSER_PROFILE"]
+        mounts = {v.split(":")[1]: v.split(":")[0] for v in svc[name]["volumes"]}
+        assert any(path.startswith(cont) for cont in mounts), f"{name}: perfil fora de um volume"
+        profiles[name] = path
+    assert profiles["monitor"] != profiles["web"]
+
+
+def test_imagem_instala_o_chromium():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "playwright install" in dockerfile and "chromium" in dockerfile
+    assert "playwright" in (ROOT / "requirements.txt").read_text(encoding="utf-8")
+
+
+def test_backup_espera_as_migracoes():
+    """Na primeira subida o backup rodava antes de as tabelas existirem e gravava um arquivo vazio."""
+    script = "\n".join(compose()["backup"]["command"])
+    assert script.index("alembic_version") < script.index("pg_dump")

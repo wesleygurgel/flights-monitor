@@ -69,7 +69,7 @@ async def require_login(request: Request, call_next):
 
 # adicionado depois do middleware de login para rodar antes dele (precisa da sessão)
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, max_age=60 * 60 * 24 * 30,
-                   same_site="lax", https_only=False)
+                   same_site="lax", https_only=settings.https_only)
 
 
 def render(request: Request, name: str, status: int = 200, **ctx) -> HTMLResponse:

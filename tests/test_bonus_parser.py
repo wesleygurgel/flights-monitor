@@ -73,3 +73,41 @@ def test_usa_resumo_quando_titulo_nao_tem_programa():
     p = parse("Azul Fidelidade lança promoção com até 100% de bônus na transferência de pontos",
               summary="A campanha vale para pontos da Esfera até 30 de setembro de 2026.", published=PUB)
     assert p.programs == ["Esfera"] and p.ends_on == date(2026, 9, 30)
+
+
+# Post real do Passageiro de Primeira, 26/10/2026: o resumo exclui Livelo e Esfera e dá o prazo por dia da semana
+PP_CARTOES_TITULO = "Azul Fidelidade oferece até 100% de bônus nas transferências de pontos dos cartões de crédito"
+PP_CARTOES_RESUMO = (
+    "O Azul Fidelidade está oferecendo até 70% de bônus nas transferências de pontos do cartões de crédito, mais até "
+    "30% de bônus extra para assinantes do Clube Azul. A oferta é válida até quarta-feira (28), contempla diversos "
+    "parceiros e ainda conta com uma bonificação adicional de 2 mil pontos Azul para primeiras transferências. Vale "
+    "ressaltar que Livelo e Esfera não estão presentes na campanha.")
+
+
+def test_programa_negado_no_resumo_nao_entra():
+    p = parse(PP_CARTOES_TITULO, summary=PP_CARTOES_RESUMO, published=date(2026, 10, 26))
+    assert "Livelo" not in p.programs and "Esfera" not in p.programs
+    assert p.programs == [GENERIC_BANKS]
+    assert p.bonus_pct == 100
+
+
+def test_prazo_por_dia_da_semana():
+    p = parse(PP_CARTOES_TITULO, summary=PP_CARTOES_RESUMO, published=date(2026, 10, 26))
+    assert p.ends_on == date(2026, 10, 28)
+
+
+def test_prazo_por_dia_da_semana_vira_o_mes():
+    p = parse("Azul dá até 90% de bônus nas transferências de pontos Livelo",
+              summary="A campanha é válida até 23h59 de sexta-feira (2).", published=date(2026, 10, 29))
+    assert p.ends_on == date(2026, 11, 2)
+
+
+@pytest.mark.parametrize("frase", [
+    "O Itaú ficou de fora desta campanha.",
+    "Válida para todos os parceiros, exceto Itaú.",
+    "O Itaú não participa da promoção.",
+])
+def test_outras_formas_de_negacao(frase):
+    p = parse("Azul Fidelidade oferece até 80% de bônus na transferência de pontos",
+              summary=f"Bônus para Livelo e C6 Bank. {frase}", published=PUB)
+    assert sorted(p.programs) == ["C6 Bank", "Livelo"]

@@ -11,3 +11,4 @@ Jinja2>=3.1
 itsdangerous>=2.1
 python-multipart>=0.0.9
 alembic>=1.13
+playwright>=1.50

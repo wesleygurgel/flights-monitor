@@ -51,6 +51,7 @@ python -m app.main web   # http://localhost:8000 (sem APP_PASSWORD, abre sem sen
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+playwright install --with-deps chromium   # navegador do calendário de preços
 cp .env.example .env            # ajuste DATABASE_URL=sqlite:///./monitor.db para começar
 python -m app.main run --collector mock --dry-run   # valida o pipeline sem internet
 python -m app.main run --dry-run                    # primeira consulta real (alertas só no console)
@@ -77,12 +78,15 @@ docker compose logs -f monitor
 
 - Rotas: pelo painel, em Gerenciar rotas.
 - `COARSE_CRON` / `FINE_CRON` no `.env`: horários (fuso `TZ`).
-- `REQUEST_DELAY`: pausa entre chamadas. Se aparecer HTTP 429, aumente e reduza `candidates`.
+- `REQUEST_DELAY`: pausa entre chamadas. Se aparecer HTTP 429 ou captcha, aumente e reduza `candidates`.
+- `PROXY_URL`: proxy (residencial) para as consultas ao Google, ex.: `http://usuario:senha@host:porta`.
+- `HTTPS_ONLY=true`: ligue quando o painel estiver atrás de HTTPS (Tailscale Serve, Cloudflare Tunnel, Caddy).
+- Varreduras do calendário com mais de 90 dias são apagadas todo dia às 4h30 (`python -m app.main prune` faz na hora).
 
 ## Limitações conhecidas
 
-- A biblioteca usa o RPC interno do Google Flights (não oficial); pode quebrar sem aviso. O coletor é um adaptador: trocar/adicionar fontes é implementar `coarse()` e `fine()` em `app/collectors.py`.
-- IPs de datacenter costumam receber 429. Rode em casa, numa VPS pequena, ou use proxy residencial.
+- O Google Flights não tem API: a busca usa o RPC interno e o calendário de preços abre um Chromium headless (o Google exige token anti-robô ali). Pode quebrar sem aviso. O coletor é um adaptador: trocar/adicionar fontes é implementar `coarse()` e `fine()` em `app/collectors.py`.
+- IPs de datacenter costumam receber 429 ou captcha. Rode em casa ou use `PROXY_URL`. Muitas consultas seguidas (ex.: vários `run` em sequência) também levam a captcha por algumas horas.
 - A regra relativa só entra após `min_samples` buscas (padrão 20 ≈ 1 semana com 3 buscas/dia).
 
 ## Banco de dados

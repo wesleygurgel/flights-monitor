@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, create_engine, select, func, text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, create_engine, delete, select, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session, sessionmaker
 
 from .config import Watch, settings
@@ -255,6 +255,17 @@ def active_watches() -> list[Watch]:
     with SessionLocal() as s:
         rows = s.execute(select(Route).where(Route.active.is_(True)).order_by(Route.created_at)).scalars().all()
         return [r.to_watch() for r in rows]
+
+
+def prune_snapshots(days: int = 90) -> int:
+    """Apaga os preços de varredura do calendário com mais de N dias (cerca de 900 linhas por rota por dia).
+    Busca detalhada, rodadas e alertas ficam: são o histórico do preço normal, do gráfico e do painel."""
+    cutoff = utcnow() - timedelta(days=days)
+    with SessionLocal() as s:
+        n = s.execute(delete(PriceSnapshot).where(PriceSnapshot.source == "coarse",
+                                                  PriceSnapshot.observed_at < cutoff)).rowcount
+        s.commit()
+    return n or 0
 
 
 def baseline(s: Session, watch_id: str, days: int = 30, since: datetime | None = None) -> tuple[float | None, int]:
